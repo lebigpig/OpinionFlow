@@ -1,0 +1,35 @@
+.gradle/
+.gradle-home/
+bin/
+build/
+out/
+target/
+
+# Kotlin/Java
+*.class
+*.log
+hs_err_pid*
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Env / secrets
+.env
+*.local
+key.properties
+
+# Spring Boot
+*.pid
+
