@@ -23,12 +23,19 @@ repositories {
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-starter-json")
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("com.mysql:mysql-connector-j")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
+    // LangChain4j Core – 提供消息类型、StreamingResponseHandler 等核心抽象
+    implementation("dev.langchain4j:langchain4j-core:1.0.0-beta1")
+    // LangChain4j – 提供 MessageWindowChatMemory 等默认实现
+    implementation("dev.langchain4j:langchain4j:1.0.0-beta1")
+    // LangChain4j OpenAI – 提供 OpenAiStreamingChatModel，替代手搓 HTTP+SSE
+    implementation("dev.langchain4j:langchain4j-open-ai:1.0.0-beta1")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
