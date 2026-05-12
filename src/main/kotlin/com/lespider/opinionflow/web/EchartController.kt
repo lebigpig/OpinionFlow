@@ -8,6 +8,8 @@ import java.nio.file.Path
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import org.springframework.http.HttpStatus
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -38,7 +40,7 @@ class EchartController(
         val safeName = sanitizeFilename(body.filename)
         val filename = safeName ?: "echart-${LocalDateTime.now().format(dtf)}.json"
 
-        val targetDir = Path.of("..", "opinionflow-vue", "src", "echart").normalize()
+        val targetDir = Path.of("..", "opinionflow-vue", "public", "echart").normalize()
         Files.createDirectories(targetDir)
 
         val file = targetDir.resolve(filename).normalize()
@@ -52,6 +54,41 @@ class EchartController(
             savedPath = file.toAbsolutePath().toString(),
             filename = filename,
         )
+    }
+
+    @GetMapping("/list")
+    fun list(): List<Map<String, String>> {
+        val targetDir = Path.of("..", "opinionflow-vue", "public", "echart").normalize()
+        if (!Files.isDirectory(targetDir)) return emptyList()
+
+        return Files.list(targetDir)
+            .filter { it.toString().endsWith(".json") }
+            .map { path ->
+                mapOf(
+                    "filename" to path.fileName.toString(),
+                    "path" to "/echart/${path.fileName}",
+                )
+            }
+            .sorted(compareByDescending { it["filename"] ?: "" })
+            .toList()
+    }
+
+    @GetMapping("/read/{filename}")
+    fun read(@PathVariable filename: String): Map<String, String> {
+        val safeName = sanitizeFilename(filename)
+            ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "filename 非法")
+
+        val targetDir = Path.of("..", "opinionflow-vue", "public", "echart").normalize()
+        val file = targetDir.resolve(safeName).normalize()
+        if (!file.startsWith(targetDir)) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "filename 非法")
+        }
+        if (!Files.exists(file)) {
+            throw ResponseStatusException(HttpStatus.NOT_FOUND, "文件不存在")
+        }
+
+        val content = Files.readString(file)
+        return mapOf("filename" to safeName, "content" to content)
     }
 
     private fun sanitizeFilename(raw: String?): String? {
