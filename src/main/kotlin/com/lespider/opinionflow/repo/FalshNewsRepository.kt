@@ -51,5 +51,15 @@ interface FalshNewsRepository : JpaRepository<FalshNews, Long> {
         @Param("q") q: String?,
         pageable: Pageable,
     ): Page<Long>
+
+    /** 增量查询：id 大于指定值，按 id 升序分页 */
+    @Query(
+        value = "select f from FalshNews f where f.id > :afterId order by f.id asc",
+        countQuery = "select count(f) from FalshNews f where f.id > :afterId",
+    )
+    fun findByIdAfter(
+        @Param("afterId") afterId: Long,
+        pageable: Pageable,
+    ): Page<FalshNews>
 }
 

@@ -72,4 +72,14 @@ interface WyNewsRepository : JpaRepository<WyNews, Long> {
         @Param("q") q: String?,
         pageable: Pageable,
     ): Page<WyNews>
+
+    /** 增量查询：id 大于指定值，按 id 升序分页 */
+    @Query(
+        value = "select w from WyNews w where w.id > :afterId order by w.id asc",
+        countQuery = "select count(w) from WyNews w where w.id > :afterId",
+    )
+    fun findByIdAfter(
+        @Param("afterId") afterId: Long,
+        pageable: Pageable,
+    ): Page<WyNews>
 }
