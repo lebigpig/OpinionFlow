@@ -68,8 +68,7 @@ class ChatMemoryController(
         try {
             chatMemoryService.chatWithMemory(
                 sessionId = sessionId,
-                userContent = content,
-                systemPrompt = body.systemPrompt,
+                userMessage = content,
                 selectedContent = body.selectedContent,
             ) { delta ->
                 val escaped = delta

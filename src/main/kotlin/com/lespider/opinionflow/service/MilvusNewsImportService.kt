@@ -11,17 +11,19 @@ import com.lespider.opinionflow.repo.YahooFinanceNewsRepository
 import dev.langchain4j.data.embedding.Embedding
 import dev.langchain4j.data.segment.TextSegment
 import dev.langchain4j.model.embedding.EmbeddingModel
-import dev.langchain4j.model.embedding.onnx.allminilml6v2q.AllMiniLmL6V2QuantizedEmbeddingModel
+import dev.langchain4j.model.embedding.onnx.bgesmallzhv15.BgeSmallZhV15EmbeddingModel
 import io.milvus.client.MilvusServiceClient
 import io.milvus.common.clientenum.ConsistencyLevelEnum
 import io.milvus.grpc.DataType
 import io.milvus.param.R
 import io.milvus.param.collection.CreateCollectionParam
 import io.milvus.param.collection.FieldType
+import io.milvus.param.collection.GetCollectionStatisticsParam
 import io.milvus.param.collection.HasCollectionParam
 import io.milvus.param.collection.LoadCollectionParam
 import io.milvus.param.dml.InsertParam
 import io.milvus.param.index.CreateIndexParam
+import io.milvus.param.collection.ReleaseCollectionParam
 import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Page
@@ -40,7 +42,7 @@ import java.time.format.DateTimeFormatter
  * 3. 网易新闻 / 实时财经新闻：通过自增 id > lastImportedId 实现增量
  * 4. 雅虎新闻：通过 fetched_at > lastImportedTime 实现增量
  * 5. 每 500 条批量写入
- * 6. 使用 AllMiniLmL6V2 本地模型进行文本向量化
+ * 6. 使用 BGE-small-zh-v1.5 中文模型进行文本向量化（512 维）
  */
 @Service
 class MilvusNewsImportService(
@@ -54,7 +56,7 @@ class MilvusNewsImportService(
 
     companion object {
         const val COLLECTION_NAME = "news_vectors"
-        const val VECTOR_DIM = 384  // AllMiniLmL6V2 输出维度
+        const val VECTOR_DIM = 512  // BGE-small-zh-v1.5 输出维度
         const val BATCH_SIZE = 500
         val DATE_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     }
@@ -63,7 +65,7 @@ class MilvusNewsImportService(
 
     @PostConstruct
     fun init() {
-        embeddingModel = AllMiniLmL6V2QuantizedEmbeddingModel()
+        embeddingModel = BgeSmallZhV15EmbeddingModel()
         ensureCollection()
         buildIndex()
         log.info("[Milvus] 初始化完成，集合: {}", COLLECTION_NAME)
@@ -134,24 +136,31 @@ class MilvusNewsImportService(
         log.info("[Milvus] 集合 {} 创建成功", COLLECTION_NAME)
     }
 
-    /** 为向量字段创建索引 */
+    /** 为向量字段创建索引（幂等：索引已存在则跳过创建，但确保 loadCollection 一定执行） */
     private fun buildIndex() {
-        milvusClient.createIndex(
-            CreateIndexParam.newBuilder()
-                .withCollectionName(COLLECTION_NAME)
-                .withFieldName("vector")
-                .withIndexType(io.milvus.param.IndexType.IVF_FLAT)
-                .withMetricType(io.milvus.param.MetricType.L2)
-                .withExtraParam("{\"nlist\":128}")
-                .withSyncMode(true)
-                .build()
-        )
+        try {
+            milvusClient.createIndex(
+                CreateIndexParam.newBuilder()
+                    .withCollectionName(COLLECTION_NAME)
+                    .withFieldName("vector")
+                    .withIndexType(io.milvus.param.IndexType.IVF_FLAT)
+                    .withMetricType(io.milvus.param.MetricType.L2)
+                    .withExtraParam("{\"nlist\":128}")
+                    .withSyncMode(true)
+                    .build()
+            )
+            log.info("[Milvus] 索引创建成功")
+        } catch (e: Exception) {
+            // 索引可能已存在，忽略错误
+            log.info("[Milvus] 索引创建跳过（可能已存在）: {}", e.message)
+        }
+        // 无论如何都执行 loadCollection，确保集合可搜索
         milvusClient.loadCollection(
             LoadCollectionParam.newBuilder()
                 .withCollectionName(COLLECTION_NAME)
                 .build()
         )
-        log.info("[Milvus] 索引创建完成，集合已加载到内存")
+        log.info("[Milvus] 集合已加载到内存，搜索就绪")
     }
 
     // ─── 导入状态管理（MySQL） ──────────────────────────────────
@@ -178,6 +187,16 @@ class MilvusNewsImportService(
      */
     fun importAllIfNeeded(): ImportResult {
         log.info("[Milvus] 开始增量导入检查...")
+
+        // 检查 Milvus 集合是否为空，如果为空则重置导入状态，强制全量导入
+        val rowCount = getCollectionRowCount()
+        log.info("[Milvus] 集合当前行数: {}", rowCount)
+        if (rowCount == 0L) {
+            log.warn("[Milvus] 集合为空！重置导入状态，将执行全量导入")
+            importStateRepository.deleteAll()
+            importStateRepository.flush()
+        }
+
         var totalImported = 0L
 
         // 1. 增量导入网易新闻（by id）
@@ -202,7 +221,34 @@ class MilvusNewsImportService(
         log.info("[Milvus] 雅虎新闻增量导入完成: {} 条", yahooCount)
 
         log.info("[Milvus] 增量导入完成，共 {} 条", totalImported)
+
+        // 导入完成后重新加载集合到内存，使新数据可搜索
+        if (totalImported > 0) {
+            reloadCollection()
+        }
+
         return ImportResult(skipped = false, totalImported = totalImported)
+    }
+
+    /** 刷新并重新加载集合到内存，使新插入的数据可搜索 */
+    private fun reloadCollection() {
+        try {
+            // 1. 释放内存中的旧快照
+            milvusClient.releaseCollection(
+                ReleaseCollectionParam.newBuilder()
+                    .withCollectionName(COLLECTION_NAME)
+                    .build()
+            )
+            // 2. 重新加载到内存（此时会加载最新数据）
+            milvusClient.loadCollection(
+                LoadCollectionParam.newBuilder()
+                    .withCollectionName(COLLECTION_NAME)
+                    .build()
+            )
+            log.info("[Milvus] 集合已重新加载，新数据可搜索")
+        } catch (e: Exception) {
+            log.warn("[Milvus] 重新加载集合失败: {}", e.message)
+        }
     }
 
     /** 增量导入网易新闻：id > lastImportedId */
@@ -332,6 +378,34 @@ class MilvusNewsImportService(
             saveState(state)
         }
         return total
+    }
+
+    /** 获取 Milvus 集合中的行数 */
+    private fun getCollectionRowCount(): Long {
+        try {
+            val resp = milvusClient.getCollectionStatistics(
+                GetCollectionStatisticsParam.newBuilder()
+                    .withCollectionName(COLLECTION_NAME)
+                    .build()
+            )
+            if (resp.getStatus() == 0) {
+                val data = resp.getData()
+                if (data != null) {
+                    for (kv in data.getStatsList()) {
+                        if (kv.getKey() == "row_count") {
+                            val count = kv.getValue().toLongOrNull() ?: 0L
+                            log.info("[Milvus] getCollectionStatistics 返回 row_count: {}", count)
+                            return count
+                        }
+                    }
+                }
+            } else {
+                log.warn("[Milvus] getCollectionStatistics 失败: {}", resp.getMessage())
+            }
+        } catch (e: Exception) {
+            log.warn("[Milvus] 获取集合行数失败: {}", e.message)
+        }
+        return 0L
     }
 
     // ─── 向量化 ──────────────────────────────────────────────

@@ -42,8 +42,8 @@ dependencies {
     implementation("com.google.protobuf:protobuf-java:3.25.5")
     // LangChain4j Embeddings – 文本向量化基础
     implementation("dev.langchain4j:langchain4j-embeddings:1.0.0-beta1")
-    // LangChain4j Embeddings – AllMiniLmL6V2 量化模型（384 维）
-    implementation("dev.langchain4j:langchain4j-embeddings-all-minilm-l6-v2-q:1.0.0-beta1")
+    // LangChain4j Embeddings – BGE 中文模型（512 维）
+    implementation("dev.langchain4j:langchain4j-embeddings-bge-small-zh-v15:1.0.0-beta1")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

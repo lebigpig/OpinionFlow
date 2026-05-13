@@ -4,16 +4,28 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lespider.opinionflow.domain.ChatHistory
 import com.lespider.opinionflow.repository.ChatHistoryRepository
+import dev.langchain4j.data.embedding.Embedding
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.data.message.UserMessage
+import dev.langchain4j.data.segment.TextSegment
 import dev.langchain4j.memory.chat.MessageWindowChatMemory
+import dev.langchain4j.model.embedding.EmbeddingModel
+import dev.langchain4j.model.embedding.onnx.bgesmallzhv15.BgeSmallZhV15EmbeddingModel
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel
 import dev.langchain4j.model.StreamingResponseHandler
 import dev.langchain4j.model.output.Response
+import io.milvus.client.MilvusServiceClient
+import io.milvus.grpc.SearchResults
+import io.milvus.param.R
+import io.milvus.param.MetricType
+import io.milvus.param.dml.SearchParam
+import io.milvus.response.SearchResultsWrapper
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import jakarta.annotation.PostConstruct
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
@@ -27,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional
  * - Redis（db3，20min TTL）：缓存最近对话内容，加速热读
  * - LangChain4j MessageWindowChatMemory：仅用于当前会话的滑动窗口（构建发送给 AI 的消息列表）
  * - 每次追问/回答完成后，追加写入 MySQL + 更新 Redis 缓存
+ * - RAG：用户消息向量化 → Milvus 检索相关新闻 → 注入 system prompt
  *
  * 前端打开 AI 分析菜单时：
  * 1. 调用 /api/chat-memory/sessions 获取所有 session 列表（从 MySQL 读取）
@@ -38,10 +51,18 @@ class ChatMemoryService(
     private val objectMapper: ObjectMapper,
     private val chatHistoryRepository: ChatHistoryRepository,
     private val redisTemplate: StringRedisTemplate,
+    private val milvusClient: MilvusServiceClient,
     @Value("\${opinionflow.ai.api-url:}") private val apiUrl: String,
     @Value("\${opinionflow.ai.api-key:}") private val apiKey: String,
     @Value("\${opinionflow.ai.model:gpt-4o-mini}") private val model: String,
+    @Value("\${opinionflow.rag.enabled:false}") private val ragEnabled: Boolean,
+    @Value("\${opinionflow.rag.collection-name:news_vectors}") private val ragCollectionName: String,
+    @Value("\${opinionflow.rag.top-k:5}") private val ragTopK: Int,
+    @Value("\${opinionflow.rag.max-distance:50.0}") private val ragMaxDistance: Double,
+    @Value("\${opinionflow.rag.context-prefix:以下是与用户问题相关的新闻资料，供你参考分析：}") private val ragContextPrefix: String,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     companion object {
         /** Redis 缓存前缀 */
         private const val REDIS_PREFIX = "chat:history:"
@@ -49,6 +70,21 @@ class ChatMemoryService(
         private val REDIS_TTL = Duration.ofMinutes(20)
         /** LangChain4j 滑动窗口最大消息数 */
         private const val MAX_MESSAGES = 40
+        /** 向量维度（BGE-small-zh-v1.5 输出维度） */
+        private const val VECTOR_DIM = 512
+    }
+
+    /** 本地嵌入模型（与 MilvusNewsImportService 使用同一模型，保证向量空间一致） */
+    private lateinit var embeddingModel: EmbeddingModel
+
+    @PostConstruct
+    fun init() {
+        embeddingModel = BgeSmallZhV15EmbeddingModel()
+        if (ragEnabled) {
+            log.info("[RAG] 已启用，集合: {}, topK: {}, maxDistance: {}", ragCollectionName, ragTopK, ragMaxDistance)
+        } else {
+            log.info("[RAG] 已禁用")
+        }
     }
 
     /**
@@ -144,31 +180,21 @@ class ChatMemoryService(
     }
 
     /**
-     * 带记忆的流式对话。
+     * 核心方法：流式 AI 对话（支持记忆 + RAG）。
      *
-     * 流程：
-     * 1) 将用户消息写入 MySQL
-     * 2) 从 MySQL+Redis 恢复该 session 的完整对话历史
-     * 3) 使用 LangChain4j 滑动窗口构建消息列表 + system prompt
-     * 4) 调用 AI 流式 API
-     * 5) AI 回复完成后，将 AI 回复写入 MySQL + 更新 Redis 缓存
-     *
-     * @param sessionId 会话 ID（前端点击历史回答时传入对应记录的 session_id）
-     * @param userContent 用户输入内容
-     * @param systemPrompt 可选的自定义 system prompt
-     * @param selectedContent 可选的选中历史回答文件内容（作为上下文）
-     * @param onDelta 流式回调
+     * @param sessionId     会话 ID
+     * @param userMessage   用户消息
+     * @param selectedContent 用户选中的历史分析报告内容（可选，注入 system prompt）
+     * @param onDelta       每个 token 的回调
      */
     fun chatWithMemory(
         sessionId: String,
-        userContent: String,
-        systemPrompt: String? = null,
+        userMessage: String,
         selectedContent: String? = null,
         onDelta: (String) -> Unit,
     ) {
-        val trimmed = userContent.trim()
-        require(trimmed.isNotEmpty()) { "内容不能为空" }
-        require(apiUrl.isNotBlank()) { "未配置 opinionflow.ai.api-url" }
+        val trimmed = userMessage.trim()
+        require(trimmed.isNotBlank()) { "消息内容不能为空" }
 
         // 1) 将用户消息写入 MySQL
         val userRecord = ChatHistory(
@@ -178,28 +204,34 @@ class ChatMemoryService(
         )
         chatHistoryRepository.save(userRecord)
 
-        // 2) 从 MySQL 恢复完整对话历史（用于构建发送给 AI 的消息列表）
-        val allRecords = chatHistoryRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
-
-        // 3) 使用 LangChain4j 滑动窗口管理消息数量
-        val memory = MessageWindowChatMemory.builder()
-            .maxMessages(MAX_MESSAGES)
-            .build()
-
-        // 将历史消息加载到滑动窗口记忆中
-        for (record in allRecords) {
+        // 2) 从 MySQL 恢复完整对话历史 → 构建 LangChain4j ChatMemory
+        val historyRecords = chatHistoryRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
+        val memory = MessageWindowChatMemory.withMaxMessages(MAX_MESSAGES)
+        for (record in historyRecords) {
             when (record.role) {
-                "user" -> memory.add(UserMessage.from(record.content))
+                "user"      -> memory.add(UserMessage.from(record.content))
                 "assistant" -> memory.add(AiMessage.from(record.content))
             }
         }
 
-        // 4) 构建 system prompt
+        // 3) 构建 system prompt
         val sysBuilder = StringBuilder()
-        val baseSys = systemPrompt?.trim().takeUnless { it.isNullOrEmpty() }
-            ?: "你是舆情与新闻分析助手。你可以参考历史分析报告和之前的对话来回答用户的问题。使用中文，条理清晰。"
-        sysBuilder.append(baseSys)
+        sysBuilder.appendLine("你是一个专业的金融和新闻分析师。请根据对话历史和提供的新闻资料，为用户提供准确、有洞察力的分析。")
+        sysBuilder.appendLine("请使用中文回答，语言要专业但易懂。")
+        sysBuilder.appendLine("如果用户追问了「选中的历史报告内容」，请优先基于该内容展开分析。")
 
+        // 4a) RAG：检索相关新闻并注入 system prompt
+        if (ragEnabled) {
+            val ragContext = retrieveRelevantNews(trimmed)
+            if (ragContext.isNotEmpty()) {
+                sysBuilder.appendLine()
+                sysBuilder.appendLine()
+                sysBuilder.appendLine(ragContextPrefix)
+                sysBuilder.appendLine(ragContext)
+            }
+        }
+
+        // 4b) 注入用户选中的历史分析报告内容
         val ctxContent = selectedContent?.trim().takeUnless { it.isNullOrEmpty() }
         if (ctxContent != null) {
             sysBuilder.appendLine()
@@ -267,8 +299,151 @@ class ChatMemoryService(
 
         // 8) 更新 Redis 缓存（整个 session 的对话列表）
         invalidateCache(sessionId)
+        System.out.println(sysBuilder.toString())
         // 懒加载：下次读取时会自动从 MySQL 加载并缓存
     }
+
+    // ─── RAG：向量检索相关新闻 ──────────────────────────────────
+
+    /**
+     * 将用户消息向量化 → 在 Milvus 中检索最相似的新闻 → 返回格式化文本。
+     *
+     * 注意：BGE-small-zh-v1.5 是中文优化模型，对中文的语义区分度较好。
+     *       L2 距离通常在 0~1.5 范围内，max-distance 建议设为 ≥ 50.0。
+     *       即使超过阈值，也会兜底取最相似的 top-k 条注入。
+     */
+    private fun retrieveRelevantNews(userText: String): String {
+        if (!ragEnabled) return ""
+
+        try {
+            // 1. 对用户消息进行向量化
+            val segment = TextSegment.from(userText)
+            val embedding: Embedding = embeddingModel.embed(segment).content()
+            val queryVector = embedding.vectorAsList()
+            log.info("[RAG] 用户消息已向量化，维度: {}, 查询: {}", queryVector.size, userText.take(50))
+            // 将完整向量写入项目根目录的 txt 文件，方便在 Attu 中手动搜索对比
+            try {
+                val vectorFile = java.io.File("rag_query_vector.txt")
+                vectorFile.writeText(queryVector.joinToString(", "))
+                log.info("[RAG] 完整向量已写入文件: {}, 维度: {}", vectorFile.absolutePath, queryVector.size)
+            } catch (e: Exception) {
+                log.warn("[RAG] 写入向量文件失败: {}", e.message)
+            }
+
+            // 2. 在 Milvus 中搜索最相似的新闻（多取一些候选以便兜底）
+            val searchParam = SearchParam.newBuilder()
+                .withCollectionName(ragCollectionName)
+                .withVectorFieldName("vector")
+                .withTopK(ragTopK * 2)
+                .withMetricType(MetricType.L2)
+                .withOutFields(listOf("source", "title", "content", "publish_time"))
+                .withExpr("")
+                .withFloatVectors(listOf(queryVector))
+                .build()
+
+            log.info("[RAG] 搜索参数: collection={}, topK={}, metricType=L2", ragCollectionName, ragTopK * 2)
+
+            val searchResp: R<SearchResults> = milvusClient.search(searchParam)
+            log.info("[RAG] 搜索响应状态: {}, 是否成功: {}", searchResp.status, searchResp.status == R.success<SearchResults>()!!.status)
+
+            if (searchResp.status != R.success<SearchResults>()!!.status) {
+                log.warn("[RAG] Milvus 搜索失败: {}", searchResp.message)
+                return ""
+            }
+
+            // 3. 解析搜索结果
+            val data = searchResp.getData()
+            if (data == null) {
+                log.warn("[RAG] 搜索响应 getData() 为 null")
+                return ""
+            }
+
+            val milvusResults = data.getResults()
+            if (milvusResults == null) {
+                log.warn("[RAG] 搜索响应 getResults() 为 null")
+                return ""
+            }
+
+            log.info("[RAG] Results fieldsDataCount={}", milvusResults.getFieldsDataCount())
+            // 用 toString() 打印原始结果结构用于调试
+            log.info("[RAG] Results toString (前500字符)={}", milvusResults.toString().take(500))
+
+            val wrapper = SearchResultsWrapper(milvusResults)
+
+            // 尝试多种方式获取结果
+            log.info("[RAG] === 尝试 getIDScore(0) ===")
+            val idScores0 = try { wrapper.getIDScore(0) } catch (e: Exception) { 
+                log.warn("[RAG] getIDScore(0) 异常: {}", e.message)
+                emptyList()
+            }
+            log.info("[RAG] getIDScore(0) 返回 {} 条结果", idScores0.size)
+
+            // 如果 getIDScore(0) 为空，尝试其他下标
+            if (idScores0.isEmpty()) {
+                // 尝试 getIDScore(1)
+                try {
+                    val idScores1 = wrapper.getIDScore(1)
+                    log.info("[RAG] getIDScore(1) 返回 {} 条结果", idScores1.size)
+                } catch (e: Exception) {
+                    log.info("[RAG] getIDScore(1) 异常: {}", e.message)
+                }
+
+                // 打印原始 protobuf 结构用于调试
+                log.info("[RAG] milvusResults protobuf (前2000字符)={}", milvusResults.toString().take(2000))
+
+                log.info("[RAG] Milvus 返回空结果集（所有方式都为空）")
+                return ""
+            }
+
+            // 打印所有结果的距离用于调试
+            for (i in idScores0.indices) {
+                val score = idScores0[i].score
+                val title = idScores0[i].get("title")?.toString() ?: ""
+                log.info("[RAG] 搜索结果[{}]: 距离={}, 标题={}", i, score, title.take(40))
+            }
+
+            val idScores = idScores0
+
+            // 4. 按距离阈值过滤，但如果全部超过阈值，取最相似的 top-k 条作为兜底
+            val filtered = idScores.filter { it.score <= ragMaxDistance }
+            val candidates = if (filtered.isNotEmpty()) filtered.take(ragTopK) else {
+                log.warn("[RAG] 所有结果距离 > {}（最近: {}），使用兜底模式取最相似的 {} 条",
+                    ragMaxDistance, idScores.first().score, ragTopK)
+                idScores.take(ragTopK)
+            }
+
+            val results = StringBuilder()
+            var count = 0
+
+            for (idScore in candidates) {
+                val score = idScore.score
+                val title = idScore.get("title")?.toString() ?: ""
+                val content = idScore.get("content")?.toString() ?: ""
+                val source = idScore.get("source")?.toString() ?: ""
+                val publishTime = idScore.get("publish_time")?.toString() ?: ""
+
+                if (content.isBlank()) continue
+
+                count++
+                results.appendLine("【$count】来源: $source | 时间: $publishTime | 标题: $title (相似度距离: ${String.format("%.4f", score)})")
+                // 截取内容前 500 字符避免 prompt 过长
+                val trimmedContent = if (content.length > 500) content.take(500) + "..." else content
+                results.appendLine("   内容: $trimmedContent")
+                results.appendLine()
+            }
+
+            if (count > 0) {
+                log.info("[RAG] 最终注入 {} 条相关新闻到 system prompt", count)
+            }
+
+            return results.toString().trimEnd()
+        } catch (e: Exception) {
+            log.error("[RAG] 向量检索异常", e)
+            return ""
+        }
+    }
+
+    // ─── 工具方法 ──────────────────────────────────────────────
 
     /**
      * 使指定 session 的 Redis 缓存失效
