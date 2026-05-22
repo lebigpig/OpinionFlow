@@ -1,0 +1,23 @@
+server:
+  port: 9204
+
+spring:
+  application:
+    name: opinionflow-echart
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+        namespace: public
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/spider?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect

@@ -1,0 +1,22 @@
+package com.lespider.opinionflow.news.controller
+
+import com.lespider.opinionflow.news.service.YahooFinanceNewsService
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
+
+@RestController
+@RequestMapping("/api/yahoo")
+class YahooFinanceNewsController(
+    private val yahooFinanceNewsService: YahooFinanceNewsService,
+) {
+    @GetMapping("/news")
+    fun page(
+        @RequestParam(name = "page", required = false, defaultValue = "0") page: Int,
+        @RequestParam(name = "size", required = false, defaultValue = "50") size: Int,
+        @RequestParam(name = "start", required = false) start: String?,
+        @RequestParam(name = "end", required = false) end: String?,
+        @RequestParam(name = "q", required = false) q: String?,
+    ) = yahooFinanceNewsService.page(page, size, start, end, q)
+}

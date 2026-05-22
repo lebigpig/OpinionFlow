@@ -1,0 +1,60 @@
+server:
+  port: 9202
+
+spring.cloud.compatibility-verifier:
+  enabled: false
+
+spring:
+  application:
+    name: opinionflow-ai
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/spider?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 3
+      password: 123456
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+      config:
+        server-addr: 127.0.0.1:8848
+        file-extension: yml
+        import-check:
+          enabled: false
+
+# AI 服务配置
+opinionflow:
+  ai:
+    api-url: https://api.deepseek.com
+    api-key: sk-954e86fb41e345999f104e9aa79181d2
+    model: deepseek-v4-flash
+  rag:
+    enabled: true
+    top-k: 5
+    max-distance: 50.0
+    context-prefix: "以下是与用户问题相关的新闻资料，供你参考分析："
+
+# Feign 配置（SSE 流式支持）
+spring.cloud.openfeign.client.config:
+  default:
+    connect-timeout: 5000
+    read-timeout: 120000
+    logger-level: full
+
+logging:
+  level:
+    com.lespider.opinionflow: debug
+    com.alibaba.cloud.nacos: info

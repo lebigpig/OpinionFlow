@@ -1,0 +1,43 @@
+server:
+  port: 9000
+
+spring:
+  application:
+    name: opinionflow-gateway
+  cloud:
+      nacos:
+        discovery:
+          server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+          register-enabled: false
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+      routes:
+        # ── 新闻服务 ──
+        - id: news
+          uri: lb://opinionflow-news
+          predicates:
+            - Path=/api/news/**,/api/nytimes/**,/api/yahoo/**
+
+        # ── AI 服务 ──
+        - id: ai
+          uri: lb://opinionflow-ai
+          predicates:
+            - Path=/api/ai/**,/api/chat-memory/**
+
+        # ── 爬虫服务 ──
+        - id: spider
+          uri: lb://opinionflow-spider
+          predicates:
+            - Path=/api/scripts/**,/api/comments/**
+
+        # ── 图表服务 ──
+        - id: echart
+          uri: lb://opinionflow-echart
+          predicates:
+            - Path=/api/echart/**

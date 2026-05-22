@@ -1,0 +1,256 @@
+> Task :opinionflow-common:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :opinionflow-common:compileKotlin UP-TO-DATE
+> Task :opinionflow-common:compileJava NO-SOURCE
+> Task :opinionflow-common:processResources NO-SOURCE
+> Task :opinionflow-common:classes UP-TO-DATE
+> Task :opinionflow-common:jar UP-TO-DATE
+> Task :opinionflow-news:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :opinionflow-news:compileKotlin UP-TO-DATE
+> Task :opinionflow-news:compileJava NO-SOURCE
+> Task :opinionflow-news:processResources UP-TO-DATE
+> Task :opinionflow-news:classes UP-TO-DATE
+> Task :opinionflow-news:resolveMainClassName UP-TO-DATE
+
+> Task :opinionflow-news:bootRun
+2026-05-21T09:49:36.798+08:00  INFO 28076 --- [opinionflow-news] [           main] c.a.nacos.client.logging.NacosLogging    : Nacos Logging Adapter Builder: com.alibaba.nacos.logger.adapter.logback12.LogbackNacosLoggingAdapterBuilder
+2026-05-21T09:49:36.804+08:00  INFO 28076 --- [opinionflow-news] [           main] c.a.nacos.client.logging.NacosLogging    : Nacos Logging Adapter Builder: com.alibaba.nacos.logger.adapter.logback14.LogbackNacosLoggingAdapterBuilder
+2026-05-21T09:49:36.805+08:00  INFO 28076 --- [opinionflow-news] [           main] c.a.nacos.client.logging.NacosLogging    : Nacos Logging Adapter: com.alibaba.nacos.logger.adapter.logback14.LogbackNacosLoggingAdapter match ch.qos.logback.classic.Logger success.
+2026-05-21T09:49:36.810+08:00  INFO 28076 --- [opinionflow-news] [           main] c.a.nacos.client.logging.NacosLogging    : Nacos Logging Adapter Builder: com.alibaba.nacos.logger.adapter.log4j2.Log4j2NacosLoggingAdapterBuilder
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v3.4.5)
+
+2026-05-21T09:49:36.950+08:00  INFO 28076 --- [opinionflow-news] [           main] c.l.o.news.NewsApplication$Companion     : Starting NewsApplication.Companion using Java 17.0.15 with PID 28076 (D:\java\OpinionFlow - 副本\opinionflow-news\build\classes\kotlin\main started by le in D:\java\OpinionFlow - 副本\opinionflow-news)
+2026-05-21T09:49:36.951+08:00  INFO 28076 --- [opinionflow-news] [           main] c.l.o.news.NewsApplication$Companion     : No active profile set, falling back to 1 default profile: "default"
+2026-05-21T09:49:37.606+08:00  INFO 28076 --- [opinionflow-news] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-05-21T09:49:37.608+08:00  INFO 28076 --- [opinionflow-news] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-05-21T09:49:37.694+08:00  INFO 28076 --- [opinionflow-news] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 80 ms. Found 4 JPA repository interfaces.
+2026-05-21T09:49:37.703+08:00  INFO 28076 --- [opinionflow-news] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-05-21T09:49:37.704+08:00  INFO 28076 --- [opinionflow-news] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2026-05-21T09:49:37.712+08:00  INFO 28076 --- [opinionflow-news] [           main] .RepositoryConfigurationExtensionSupport : Spring Data Redis - Could not safely identify store assignment for repository candidate interface com.lespider.opinionflow.news.repo.FalshNewsRepository; If you want this repository to be a Redis repository, consider annotating your entities with one of these annotations: org.springframework.data.redis.core.RedisHash (preferred), or consider extending one of the following types with your repository: org.springframework.data.keyvalue.repository.KeyValueRepository
+2026-05-21T09:49:37.713+08:00  INFO 28076 --- [opinionflow-news] [           main] .RepositoryConfigurationExtensionSupport : Spring Data Redis - Could not safely identify store assignment for repository candidate interface com.lespider.opinionflow.news.repo.NewYorkNewsRepository; If you want this repository to be a Redis repository, consider annotating your entities with one of these annotations: org.springframework.data.redis.core.RedisHash (preferred), or consider extending one of the following types with your repository: org.springframework.data.keyvalue.repository.KeyValueRepository
+2026-05-21T09:49:37.713+08:00  INFO 28076 --- [opinionflow-news] [           main] .RepositoryConfigurationExtensionSupport : Spring Data Redis - Could not safely identify store assignment for repository candidate interface com.lespider.opinionflow.news.repo.WyNewsRepository; If you want this repository to be a Redis repository, consider annotating your entities with one of these annotations: org.springframework.data.redis.core.RedisHash (preferred), or consider extending one of the following types with your repository: org.springframework.data.keyvalue.repository.KeyValueRepository
+2026-05-21T09:49:37.713+08:00  INFO 28076 --- [opinionflow-news] [           main] .RepositoryConfigurationExtensionSupport : Spring Data Redis - Could not safely identify store assignment for repository candidate interface com.lespider.opinionflow.news.repo.YahooFinanceNewsRepository; If you want this repository to be a Redis repository, consider annotating your entities with one of these annotations: org.springframework.data.redis.core.RedisHash (preferred), or consider extending one of the following types with your repository: org.springframework.data.keyvalue.repository.KeyValueRepository
+2026-05-21T09:49:37.713+08:00  INFO 28076 --- [opinionflow-news] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 4 ms. Found 0 Redis repository interfaces.
+2026-05-21T09:49:37.783+08:00  INFO 28076 --- [opinionflow-news] [           main] o.s.cloud.context.scope.GenericScope     : BeanFactory id=2a472f69-dd33-3089-a285-b56c7ae5bfbb
+2026-05-21T09:49:38.174+08:00  INFO 28076 --- [opinionflow-news] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 9201 (http)
+2026-05-21T09:49:38.186+08:00  INFO 28076 --- [opinionflow-news] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-05-21T09:49:38.186+08:00  INFO 28076 --- [opinionflow-news] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.40]
+2026-05-21T09:49:38.226+08:00  INFO 28076 --- [opinionflow-news] [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-05-21T09:49:38.227+08:00  INFO 28076 --- [opinionflow-news] [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 1239 ms
+2026-05-21T09:49:38.574+08:00  INFO 28076 --- [opinionflow-news] [           main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-05-21T09:49:38.625+08:00  INFO 28076 --- [opinionflow-news] [           main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.6.13.Final
+2026-05-21T09:49:38.652+08:00  INFO 28076 --- [opinionflow-news] [           main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-05-21T09:49:38.851+08:00  INFO 28076 --- [opinionflow-news] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-05-21T09:49:38.875+08:00  INFO 28076 --- [opinionflow-news] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-05-21T09:49:38.978+08:00  INFO 28076 --- [opinionflow-news] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@61c3d7ac
+2026-05-21T09:49:38.980+08:00  INFO 28076 --- [opinionflow-news] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-05-21T09:49:39.038+08:00  INFO 28076 --- [opinionflow-news] [           main] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-1)']
+	Database driver: undefined/unknown
+	Database version: 8.0.41
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-05-21T09:49:39.617+08:00  INFO 28076 --- [opinionflow-news] [           main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-05-21T09:49:39.661+08:00  INFO 28076 --- [opinionflow-news] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-05-21T09:49:40.016+08:00  INFO 28076 --- [opinionflow-news] [           main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.
+2026-05-21T09:49:41.416+08:00  WARN 28076 --- [opinionflow-news] [           main] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning
+2026-05-21T09:49:42.202+08:00  INFO 28076 --- [opinionflow-news] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 1 endpoint beneath base path '/actuator'
+2026-05-21T09:49:42.256+08:00  WARN 28076 --- [opinionflow-news] [           main] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.context.ApplicationContextException: Failed to start bean 'webServerStartStop'
+2026-05-21T09:49:42.258+08:00  INFO 28076 --- [opinionflow-news] [           main] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2026-05-21T09:49:42.259+08:00  INFO 28076 --- [opinionflow-news] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown initiated...
+2026-05-21T09:49:42.264+08:00  INFO 28076 --- [opinionflow-news] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown completed.
+2026-05-21T09:49:42.281+08:00  INFO 28076 --- [opinionflow-news] [           main] .s.b.a.l.ConditionEvaluationReportLogger : 
+
+Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
+2026-05-21T09:49:42.292+08:00 ERROR 28076 --- [opinionflow-news] [           main] o.s.b.d.LoggingFailureAnalysisReporter   : 
+
+***************************
+APPLICATION FAILED TO START
+***************************
+
+Description:
+
+Web server failed to start. Port 9201 was already in use.
+
+Action:
+
+Identify and stop the process that's listening on port 9201 or configure this application to listen on another port.
+
+2026-05-21T09:49:43.277+08:00  WARN 28076 --- [opinionflow-news] [       Thread-2] c.a.n.common.executor.ThreadPoolManager  : [ThreadPoolManager] Start destroying ThreadPool
+2026-05-21T09:49:43.277+08:00  WARN 28076 --- [opinionflow-news] [       Thread-2] c.a.n.common.executor.ThreadPoolManager  : [ThreadPoolManager] Destruction of the end
+
+> Task :opinionflow-news:bootRun FAILED
+
+[Incubating] Problems report is available at: file:///D:/java/OpinionFlow%20-%20%E5%89%AF%E6%9C%AC/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':opinionflow-news:bootRun'.
+> Process 'command 'D:\jdk17\bin\java.exe'' finished with non-zero exit value 1
+
+* Try:
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+* Exception is:
+org.gradle.api.tasks.TaskExecutionException: Execution failed for task ':opinionflow-news:bootRun'.
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.lambda$executeIfValid$1(ExecuteActionsTaskExecuter.java:135)
+	at org.gradle.internal.Try$Failure.ifSuccessfulOrElse(Try.java:288)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.executeIfValid(ExecuteActionsTaskExecuter.java:133)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.execute(ExecuteActionsTaskExecuter.java:121)
+	at org.gradle.api.internal.tasks.execution.ProblemsTaskPathTrackingTaskExecuter.execute(ProblemsTaskPathTrackingTaskExecuter.java:41)
+	at org.gradle.api.internal.tasks.execution.ResolveTaskExecutionModeExecuter.execute(ResolveTaskExecutionModeExecuter.java:51)
+	at org.gradle.api.internal.tasks.execution.FinalizePropertiesTaskExecuter.execute(FinalizePropertiesTaskExecuter.java:46)
+	at org.gradle.api.internal.tasks.execution.SkipTaskWithNoActionsExecuter.execute(SkipTaskWithNoActionsExecuter.java:57)
+	at org.gradle.api.internal.tasks.execution.SkipOnlyIfTaskExecuter.execute(SkipOnlyIfTaskExecuter.java:74)
+	at org.gradle.api.internal.tasks.execution.CatchExceptionTaskExecuter.execute(CatchExceptionTaskExecuter.java:36)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.executeTask(EventFiringTaskExecuter.java:77)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:55)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter$1.call(EventFiringTaskExecuter.java:52)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:210)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:205)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:67)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:60)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:167)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:60)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:54)
+	at org.gradle.api.internal.tasks.execution.EventFiringTaskExecuter.execute(EventFiringTaskExecuter.java:52)
+	at org.gradle.execution.plan.DefaultNodeExecutor.executeLocalTaskNode(DefaultNodeExecutor.java:55)
+	at org.gradle.execution.plan.DefaultNodeExecutor.execute(DefaultNodeExecutor.java:34)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:355)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$InvokeNodeExecutorsAction.execute(DefaultTaskExecutionGraph.java:343)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.lambda$execute$0(DefaultTaskExecutionGraph.java:339)
+	at org.gradle.internal.operations.CurrentBuildOperationRef.with(CurrentBuildOperationRef.java:84)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:339)
+	at org.gradle.execution.taskgraph.DefaultTaskExecutionGraph$BuildOperationAwareExecutionAction.execute(DefaultTaskExecutionGraph.java:328)
+	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.execute(DefaultPlanExecutor.java:459)
+	at org.gradle.execution.plan.DefaultPlanExecutor$ExecutorWorker.run(DefaultPlanExecutor.java:376)
+	at org.gradle.internal.concurrent.ExecutorPolicy$CatchAndRecordFailures.onExecute(ExecutorPolicy.java:64)
+	at org.gradle.internal.concurrent.AbstractManagedExecutor$1.run(AbstractManagedExecutor.java:47)
+Caused by: org.gradle.process.ProcessExecutionException: Process 'command 'D:\jdk17\bin\java.exe'' finished with non-zero exit value 1
+	at org.gradle.process.internal.DefaultExecHandle$ExecResultImpl.assertNormalExitValue(DefaultExecHandle.java:459)
+	at org.gradle.process.internal.DefaultJavaExecAction.execute(DefaultJavaExecAction.java:58)
+	at org.gradle.api.tasks.JavaExec.exec(JavaExec.java:172)
+	at org.springframework.boot.gradle.tasks.run.BootRun.exec(BootRun.java:75)
+	at org.gradle.internal.reflect.JavaMethod.invoke(JavaMethod.java:125)
+	at org.gradle.api.internal.project.taskfactory.StandardTaskAction.doExecute(StandardTaskAction.java:58)
+	at org.gradle.api.internal.project.taskfactory.StandardTaskAction.execute(StandardTaskAction.java:51)
+	at org.gradle.api.internal.project.taskfactory.StandardTaskAction.execute(StandardTaskAction.java:29)
+	at org.gradle.api.internal.tasks.execution.TaskExecution$3.run(TaskExecution.java:259)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$1.execute(DefaultBuildOperationRunner.java:30)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$1.execute(DefaultBuildOperationRunner.java:27)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:67)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:60)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:167)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:60)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.run(DefaultBuildOperationRunner.java:48)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeAction(TaskExecution.java:244)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeActions(TaskExecution.java:227)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.executeWithPreviousOutputFiles(TaskExecution.java:210)
+	at org.gradle.api.internal.tasks.execution.TaskExecution.execute(TaskExecution.java:176)
+	at org.gradle.internal.execution.steps.ExecuteStep.executeInternal(ExecuteStep.java:167)
+	at org.gradle.internal.execution.steps.ExecuteStep.access$000(ExecuteStep.java:47)
+	at org.gradle.internal.execution.steps.ExecuteStep$1.call(ExecuteStep.java:137)
+	at org.gradle.internal.execution.steps.ExecuteStep$1.call(ExecuteStep.java:134)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:210)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperationRunner.java:205)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:67)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner$2.execute(DefaultBuildOperationRunner.java:60)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:167)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.execute(DefaultBuildOperationRunner.java:60)
+	at org.gradle.internal.operations.DefaultBuildOperationRunner.call(DefaultBuildOperationRunner.java:54)
+	at org.gradle.internal.execution.steps.ExecuteStep.execute(ExecuteStep.java:134)
+	at org.gradle.internal.execution.steps.ExecuteStep$Mutable.execute(ExecuteStep.java:80)
+	at org.gradle.internal.execution.steps.CancelExecutionStep.execute(CancelExecutionStep.java:42)
+	at org.gradle.internal.execution.steps.TimeoutStep.executeWithoutTimeout(TimeoutStep.java:75)
+	at org.gradle.internal.execution.steps.TimeoutStep.execute(TimeoutStep.java:55)
+	at org.gradle.internal.execution.steps.PreCreateOutputParentsStep.execute(PreCreateOutputParentsStep.java:51)
+	at org.gradle.internal.execution.steps.PreCreateOutputParentsStep.execute(PreCreateOutputParentsStep.java:29)
+	at org.gradle.internal.execution.steps.RemovePreviousOutputsStep.executeMutable(RemovePreviousOutputsStep.java:67)
+	at org.gradle.internal.execution.steps.RemovePreviousOutputsStep.executeMutable(RemovePreviousOutputsStep.java:39)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:26)
+	at org.gradle.internal.execution.steps.BroadcastChangingOutputsStep.execute(BroadcastChangingOutputsStep.java:42)
+	at org.gradle.internal.execution.steps.BroadcastChangingOutputsStep.execute(BroadcastChangingOutputsStep.java:24)
+	at org.gradle.internal.execution.steps.CaptureOutputsAfterExecutionStep.execute(CaptureOutputsAfterExecutionStep.java:69)
+	at org.gradle.internal.execution.steps.CaptureOutputsAfterExecutionStep.execute(CaptureOutputsAfterExecutionStep.java:46)
+	at org.gradle.internal.execution.steps.ResolveInputChangesStep.executeMutable(ResolveInputChangesStep.java:39)
+	at org.gradle.internal.execution.steps.ResolveInputChangesStep.executeMutable(ResolveInputChangesStep.java:28)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:26)
+	at org.gradle.internal.execution.steps.BuildCacheStep.executeWithoutCache(BuildCacheStep.java:189)
+	at org.gradle.internal.execution.steps.BuildCacheStep.lambda$execute$1(BuildCacheStep.java:76)
+	at org.gradle.internal.Either$Right.fold(Either.java:176)
+	at org.gradle.internal.execution.caching.CachingState.fold(CachingState.java:62)
+	at org.gradle.internal.execution.steps.BuildCacheStep.execute(BuildCacheStep.java:74)
+	at org.gradle.internal.execution.steps.BuildCacheStep.execute(BuildCacheStep.java:49)
+	at org.gradle.internal.execution.steps.StoreExecutionStateStep.executeMutable(StoreExecutionStateStep.java:46)
+	at org.gradle.internal.execution.steps.StoreExecutionStateStep.executeMutable(StoreExecutionStateStep.java:35)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:26)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.executeBecause(SkipUpToDateStep.java:75)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.lambda$execute$2(SkipUpToDateStep.java:53)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.execute(SkipUpToDateStep.java:53)
+	at org.gradle.internal.execution.steps.SkipUpToDateStep.execute(SkipUpToDateStep.java:35)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsFinishedStep.execute(MarkSnapshottingInputsFinishedStep.java:37)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsFinishedStep.execute(MarkSnapshottingInputsFinishedStep.java:27)
+	at org.gradle.internal.execution.steps.ResolveMutableCachingStateStep.executeDelegate(ResolveMutableCachingStateStep.java:70)
+	at org.gradle.internal.execution.steps.ResolveMutableCachingStateStep.executeDelegate(ResolveMutableCachingStateStep.java:32)
+	at org.gradle.internal.execution.steps.AbstractResolveCachingStateStep.execute(AbstractResolveCachingStateStep.java:69)
+	at org.gradle.internal.execution.steps.AbstractResolveCachingStateStep.execute(AbstractResolveCachingStateStep.java:37)
+	at org.gradle.internal.execution.steps.ResolveChangesStep.executeMutable(ResolveChangesStep.java:63)
+	at org.gradle.internal.execution.steps.ResolveChangesStep.executeMutable(ResolveChangesStep.java:34)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:26)
+	at org.gradle.internal.execution.steps.ValidateStep$Mutable.executeDelegate(ValidateStep.java:79)
+	at org.gradle.internal.execution.steps.ValidateStep$Mutable.executeDelegate(ValidateStep.java:65)
+	at org.gradle.internal.execution.steps.ValidateStep.execute(ValidateStep.java:99)
+	at org.gradle.internal.execution.steps.ValidateStep$Mutable.execute(ValidateStep.java:65)
+	at org.gradle.internal.execution.steps.CaptureMutableStateBeforeExecutionStep.executeMutable(CaptureMutableStateBeforeExecutionStep.java:86)
+	at org.gradle.internal.execution.steps.CaptureMutableStateBeforeExecutionStep.execute(CaptureMutableStateBeforeExecutionStep.java:65)
+	at org.gradle.internal.execution.steps.CaptureMutableStateBeforeExecutionStep.execute(CaptureMutableStateBeforeExecutionStep.java:45)
+	at org.gradle.internal.execution.steps.SkipEmptyMutableWorkStep.executeWithNonEmptySources(SkipEmptyMutableWorkStep.java:210)
+	at org.gradle.internal.execution.steps.SkipEmptyMutableWorkStep.executeMutable(SkipEmptyMutableWorkStep.java:85)
+	at org.gradle.internal.execution.steps.SkipEmptyMutableWorkStep.executeMutable(SkipEmptyMutableWorkStep.java:53)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:26)
+	at org.gradle.internal.execution.steps.legacy.MarkSnapshottingInputsStartedStep.execute(MarkSnapshottingInputsStartedStep.java:38)
+	at org.gradle.internal.execution.steps.LoadPreviousExecutionStateStep.executeMutable(LoadPreviousExecutionStateStep.java:36)
+	at org.gradle.internal.execution.steps.LoadPreviousExecutionStateStep.executeMutable(LoadPreviousExecutionStateStep.java:23)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:26)
+	at org.gradle.internal.execution.steps.HandleStaleOutputsStep.executeMutable(HandleStaleOutputsStep.java:77)
+	at org.gradle.internal.execution.steps.HandleStaleOutputsStep.executeMutable(HandleStaleOutputsStep.java:43)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:26)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.lambda$executeMutable$0(AssignMutableWorkspaceStep.java:34)
+	at org.gradle.api.internal.tasks.execution.TaskExecution$4.withWorkspace(TaskExecution.java:305)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.executeMutable(AssignMutableWorkspaceStep.java:30)
+	at org.gradle.internal.execution.steps.AssignMutableWorkspaceStep.executeMutable(AssignMutableWorkspaceStep.java:21)
+	at org.gradle.internal.execution.steps.MutableStep.execute(MutableStep.java:26)
+	at org.gradle.internal.execution.steps.ChoosePipelineStep.execute(ChoosePipelineStep.java:40)
+	at org.gradle.internal.execution.steps.ChoosePipelineStep.execute(ChoosePipelineStep.java:23)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.lambda$execute$2(ExecuteWorkBuildOperationFiringStep.java:67)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.execute(ExecuteWorkBuildOperationFiringStep.java:67)
+	at org.gradle.internal.execution.steps.ExecuteWorkBuildOperationFiringStep.execute(ExecuteWorkBuildOperationFiringStep.java:39)
+	at org.gradle.internal.execution.steps.IdentityCacheStep.execute(IdentityCacheStep.java:46)
+	at org.gradle.internal.execution.steps.IdentityCacheStep.execute(IdentityCacheStep.java:34)
+	at org.gradle.internal.execution.steps.IdentifyStep.execute(IdentifyStep.java:56)
+	at org.gradle.internal.execution.steps.IdentifyStep.execute(IdentifyStep.java:38)
+	at org.gradle.internal.execution.impl.DefaultExecutionEngine$1.execute(DefaultExecutionEngine.java:68)
+	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.executeIfValid(ExecuteActionsTaskExecuter.java:132)
+	... 30 more
+
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.4.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 8s
+6 actionable tasks: 1 executed, 5 up-to-date
