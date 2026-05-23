@@ -3,6 +3,7 @@ package com.lespider.opinionflow.news.service
 import com.lespider.opinionflow.news.domain.NewsConstants
 import com.lespider.opinionflow.news.repo.FalshNewsRepository
 import com.lespider.opinionflow.news.repo.WyNewsRepository
+import com.lespider.opinionflow.news.repo.YahooFinanceNewsRepository
 import com.lespider.opinionflow.news.dto.NewsDetailDto
 import com.lespider.opinionflow.news.dto.IdListResponse
 import com.lespider.opinionflow.news.dto.NewsSummaryDto
@@ -20,6 +21,7 @@ import org.springframework.web.server.ResponseStatusException
 class NewsService(
     private val wyNewsRepository: WyNewsRepository,
     private val falshNewsRepository: FalshNewsRepository,
+    private val yahooFinanceNewsRepository: YahooFinanceNewsRepository,
 ) {
     private val ymdHms: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
@@ -118,8 +120,42 @@ class NewsService(
         val ids = page.content
         val truncated = total > ids.size.toLong()
         return IdListResponse(
-            ids = ids,
+            ids = ids.map { it.toString() },
             total = total,
+            truncated = truncated,
+            limit = lim,
+        )
+    }
+
+    @Transactional(readOnly = true)
+    fun generalIds(start: String?, end: String?, q: String?, limit: Int?): IdListResponse {
+        val startDt = parseDateTimeOrNull(start)
+        val endDt = parseDateTimeOrNull(end)
+        val qq = q?.trim()?.takeIf { it.isNotEmpty() }
+        val lim = (limit ?: 5000).coerceIn(1, 50000)
+
+        // 通用新闻排除 DeepSeek 菜单标题
+        val allCount = wyNewsRepository.countFiltered(startDt, endDt, qq)
+        val ids = wyNewsRepository.findIdsFiltered(startDt, endDt, qq, PageRequest.of(0, lim))
+        val truncated = allCount > ids.size.toLong()
+        return IdListResponse(
+            ids = ids.map { it.toString() },
+            total = allCount,
+            truncated = truncated,
+            limit = lim,
+        )
+    }
+
+    @Transactional(readOnly = true)
+    fun yahooIds(start: String?, end: String?, q: String?, limit: Int?): IdListResponse {
+        val qq = q?.trim()?.takeIf { it.isNotEmpty() }
+        val lim = (limit ?: 5000).coerceIn(1, 50000)
+        val allCount = yahooFinanceNewsRepository.countFiltered(start, end, qq)
+        val ids = yahooFinanceNewsRepository.findIdsFiltered(start, end, qq, PageRequest.of(0, lim))
+        val truncated = allCount > ids.size.toLong()
+        return IdListResponse(
+            ids = ids,
+            total = allCount,
             truncated = truncated,
             limit = lim,
         )

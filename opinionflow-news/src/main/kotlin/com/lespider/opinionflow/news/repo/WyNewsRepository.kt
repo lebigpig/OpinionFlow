@@ -82,4 +82,20 @@ interface WyNewsRepository : JpaRepository<WyNews, Long> {
         @Param("afterId") afterId: Long,
         pageable: Pageable,
     ): Page<WyNews>
+
+    /** 仅查询 ID，按 id 升序 */
+    @Query("select w.id from WyNews w where (:start is null or w.time >= :start) and (:end is null or w.time <= :end) and (:q is null or (w.title like concat('%', :q, '%') or w.content like concat('%', :q, '%'))) order by w.id asc")
+    fun findIdsFiltered(
+        @Param("start") start: LocalDateTime?,
+        @Param("end") end: LocalDateTime?,
+        @Param("q") q: String?,
+        pageable: Pageable,
+    ): List<Long>
+
+    @Query("select count(w) from WyNews w where (:start is null or w.time >= :start) and (:end is null or w.time <= :end) and (:q is null or (w.title like concat('%', :q, '%') or w.content like concat('%', :q, '%')))")
+    fun countFiltered(
+        @Param("start") start: LocalDateTime?,
+        @Param("end") end: LocalDateTime?,
+        @Param("q") q: String?,
+    ): Long
 }

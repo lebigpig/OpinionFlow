@@ -29,4 +29,20 @@ interface YahooFinanceNewsRepository : JpaRepository<YahooFinanceNews, String> {
         @Param("afterTime") afterTime: LocalDateTime,
         pageable: Pageable,
     ): Page<YahooFinanceNews>
+
+    /** 仅查询 ID，按 id 升序 */
+    @Query("select y.id from YahooFinanceNews y where (:start is null or y.displayTime >= :start) and (:end is null or y.displayTime <= :end) and (:q is null or (y.title like concat('%', :q, '%') or y.summary like concat('%', :q, '%'))) order by y.id asc")
+    fun findIdsFiltered(
+        @Param("start") start: String?,
+        @Param("end") end: String?,
+        @Param("q") q: String?,
+        pageable: Pageable,
+    ): List<String>
+
+    @Query("select count(y) from YahooFinanceNews y where (:start is null or y.displayTime >= :start) and (:end is null or y.displayTime <= :end) and (:q is null or (y.title like concat('%', :q, '%') or y.summary like concat('%', :q, '%')))")
+    fun countFiltered(
+        @Param("start") start: String?,
+        @Param("end") end: String?,
+        @Param("q") q: String?,
+    ): Long
 }

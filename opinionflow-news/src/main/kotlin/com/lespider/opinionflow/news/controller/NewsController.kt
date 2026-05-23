@@ -52,4 +52,20 @@ class NewsController(
 
     @GetMapping("/finance/{id}")
     fun financeDetail(@PathVariable id: Long) = newsService.getFinanceById(id)
+
+    @GetMapping("/general/ids")
+    fun generalIds(
+        @RequestParam(name = "start", required = false) start: String?,
+        @RequestParam(name = "end", required = false) end: String?,
+        @RequestParam(name = "q", required = false) q: String?,
+        @RequestParam(name = "limit", required = false) limit: Int?,
+    ) = newsService.generalIds(start, end, q, limit)
+
+    @GetMapping("/yahoo/ids")
+    fun yahooIds(
+        @RequestParam(name = "start", required = false) start: String?,
+        @RequestParam(name = "end", required = false) end: String?,
+        @RequestParam(name = "q", required = false) q: String?,
+        @RequestParam(name = "limit", required = false) limit: Int?,
+    ) = newsService.yahooIds(start, end, q, limit)
 }
