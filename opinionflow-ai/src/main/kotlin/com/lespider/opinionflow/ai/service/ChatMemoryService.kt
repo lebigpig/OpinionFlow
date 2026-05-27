@@ -161,24 +161,32 @@ class ChatMemoryService(
         sysBuilder.appendLine("请使用中文回答，语言要专业但易懂。")
         sysBuilder.appendLine("如果用户追问了「选中的历史报告内容」，请优先基于该内容展开分析。")
 
-        // 4a) RAG：通过 Feign 调用 RAG 服务检索相关新闻并注入 system prompt
-        if (ragEnabled) {
-            val ragContext = retrieveRelevantNews(trimmed)
-            if (ragContext.isNotEmpty()) {
-                sysBuilder.appendLine()
-                sysBuilder.appendLine()
-                sysBuilder.appendLine(ragContextPrefix)
-                sysBuilder.appendLine(ragContext)
-            }
-        }
-
-        // 4b) 注入用户选中的历史分析报告内容
+        // 4a) 注入用户选中的新闻内容（如有）
         val ctxContent = selectedContent?.trim().takeUnless { it.isNullOrEmpty() }
         if (ctxContent != null) {
             sysBuilder.appendLine()
             sysBuilder.appendLine()
-            sysBuilder.appendLine("以下是用户选中的历史分析报告内容，你可以参考这些内容来回答用户的问题：")
+            sysBuilder.appendLine("以下是用户选中的新闻内容，你可以参考这些内容来回答用户的问题：")
             sysBuilder.appendLine(ctxContent)
+        }
+
+        // 4b) RAG 检索相关新闻注入 system prompt
+        //     - 如果用户未勾选新闻（ctxContent 为空），强制使用 RAG 检索相关内容作为上下文
+        //     - 如果用户已勾选新闻，仅在 ragEnabled 开启时才额外检索
+        val forceRag = ctxContent.isNullOrEmpty()  // 未选中新闻时强制 RAG 检索
+        val shouldUseRag = forceRag || ragEnabled
+        if (shouldUseRag) {
+            val ragContext = retrieveRelevantNews(trimmed, force = forceRag)
+            if (ragContext.isNotEmpty()) {
+                sysBuilder.appendLine()
+                sysBuilder.appendLine()
+                if (ctxContent.isNullOrEmpty()) {
+                    sysBuilder.appendLine("以下是通过智能检索找到的相关新闻资料，供你参考分析：")
+                } else {
+                    sysBuilder.appendLine(ragContextPrefix)
+                }
+                sysBuilder.appendLine(ragContext)
+            }
         }
 
         val sysText = sysBuilder.toString()
@@ -245,8 +253,8 @@ class ChatMemoryService(
     /**
      * 通过 Feign 调用 opinionflow-rag 服务进行向量检索。
      */
-    private fun retrieveRelevantNews(userText: String): String {
-        if (!ragEnabled) return ""
+    private fun retrieveRelevantNews(userText: String, force: Boolean = false): String {
+        if (!force && !ragEnabled) return ""
 
         try {
             val request = RagSearchRequest(
