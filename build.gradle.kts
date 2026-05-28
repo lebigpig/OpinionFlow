@@ -19,6 +19,7 @@ subprojects {
     the<io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension>().apply {
         imports {
             mavenBom("org.springframework.boot:spring-boot-dependencies:3.4.5")
+            mavenBom("org.springframework.ai:spring-ai-bom:1.0.0")
             mavenBom("org.springframework.cloud:spring-cloud-dependencies:${property("springCloudVersion")}")
             mavenBom("com.alibaba.cloud:spring-cloud-alibaba-dependencies:${property("springCloudAlibabaVersion")}")
         }
@@ -26,6 +27,8 @@ subprojects {
 
     repositories {
         mavenCentral()
+        maven { url = uri("https://repo.spring.io/milestone") }
+        maven { url = uri("https://repo.spring.io/snapshot") }
     }
 
     tasks.withType<org.springframework.boot.gradle.tasks.bundling.BootJar> {

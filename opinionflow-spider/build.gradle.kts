@@ -39,6 +39,9 @@ dependencies {
     // MySQL
     runtimeOnly("com.mysql:mysql-connector-j")
 
+    // WebClient (用于调用外部 HTTP API)
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
+
     // Jackson
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")

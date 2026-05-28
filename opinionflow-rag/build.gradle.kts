@@ -77,9 +77,6 @@ tasks.withType<Test> {
 tasks.withType<JavaExec> {
     systemProperty("file.encoding", "UTF-8")
     jvmArgs = listOf(
-        "-Dfile.encoding=UTF-8",
-        "-Dsun.stdout.encoding=UTF-8",
-        "-Dsun.stderr.encoding=UTF-8",
-        "-Dconsole.encoding=UTF-8"
+        "-Dfile.encoding=UTF-8"
     )
 }
