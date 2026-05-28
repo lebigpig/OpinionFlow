@@ -33,7 +33,7 @@ spring:
         - id: spider
           uri: lb://opinionflow-spider
           predicates:
-            - Path=/api/scripts/**,/api/comments/**
+            - Path=/api/scripts/**,/api/comments/**,/api/search-results/**
 
         # ── 图表服务 ──
         - id: echart
