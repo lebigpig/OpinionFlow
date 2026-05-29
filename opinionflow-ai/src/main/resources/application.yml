@@ -5,6 +5,8 @@ spring.cloud.compatibility-verifier:
   enabled: false
 
 spring:
+  config:
+    import: optional:file:./key.properties,optional:file:../key.properties
   application:
     name: opinionflow-ai
   datasource:
@@ -38,14 +40,21 @@ spring:
 # AI 服务配置
 opinionflow:
   ai:
-    api-url: https://api.deepseek.com
-    api-key: sk-954e86fb41e345999f104e9aa79181d2
-    model: deepseek-v4-flash
+    api-url: ${opinionflow.ai.api-url}
+    api-key: ${opinionflow.ai.api-key}
+    model: ${opinionflow.ai.model}
   rag:
     enabled: true
     top-k: 5
     max-distance: 50.0
     context-prefix: "以下是与用户问题相关的新闻资料，供你参考分析："
+  # Tavily 联网搜索服务配置
+  tavily:
+    enabled: true
+    api-key: ${tavily.api-key:}
+    base-url: ${tavily.base-url:https://api.tavily.com}
+    max-results: 12
+    search-depth: advanced
 
 # Feign 配置（SSE 流式支持）
 spring.cloud.openfeign.client.config:

@@ -70,6 +70,7 @@ class ChatMemoryController(
                 sessionId = sessionId,
                 userMessage = content,
                 selectedContent = body.selectedContent,
+                webSearch = body.webSearch,
             ) { delta ->
                 val escaped = delta
                     .replace("\\", "\\\\")
