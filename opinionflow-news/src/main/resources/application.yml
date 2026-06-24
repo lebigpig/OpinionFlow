@@ -22,7 +22,7 @@ spring:
     password: ${DB_PASS:123456}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: false
   data:
     redis:
