@@ -32,6 +32,25 @@ class AiController(
         }
     }
 
+    /**
+     * 世界格局地图智能 Agent：解析用户的自然语言指令，返回结构化 JSON 文本。
+     * 与 /parse 使用不同地址，便于前端按场景路由。
+     * body: { content: "用户指令", systemPrompt: "约束输出 JSON 的系统提示" }
+     */
+    @PostMapping("/world-map-agent")
+    fun worldMapAgent(@RequestBody body: AiParseRequest): AiParseResponse {
+        val content = body.content?.trim().orEmpty()
+        val systemPrompt = body.systemPrompt?.trim()
+        if (content.isEmpty()) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "content 不能为空")
+        }
+        return try {
+            AiParseResponse(result = aiParseService.parse(content, systemPrompt))
+        } catch (e: IllegalArgumentException) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, e.message, e)
+        }
+    }
+
     @PostMapping("/parse/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun parseStream(@RequestBody body: AiParseRequest): SseEmitter {
         val content = body.content?.trim().orEmpty()

@@ -64,8 +64,18 @@ class AiParseService(
             }
             .body(body.toString())
 
-        val response = spec.retrieve().body(String::class.java)
-            ?: error("AI 接口返回空响应")
+        val response: String
+        try {
+            response = spec.retrieve().body(String::class.java)
+                ?: error("AI 接口返回空响应")
+        } catch (e: org.springframework.web.client.RestClientResponseException) {
+            val body = try { e.responseBodyAsString } catch (_: Exception) { "" }
+            error("AI 接口错误 HTTP ${e.statusCode?.value()}: $body")
+        } catch (e: org.springframework.http.converter.HttpMessageConversionException) {
+            error("AI 接口响应解析失败：${e.message}")
+        } catch (e: Exception) {
+            error("AI 接口调用失败：${e.message}")
+        }
 
         val root = objectMapper.readTree(response)
         val text = root.path("choices").path(0).path("message").path("content").asText(null)
