@@ -40,6 +40,12 @@ subprojects {
     }
 
     tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
-        jvmArgs("-Dspring.cloud.compatibility-verifier.enabled=false")
+        jvmArgs(
+            "-Dspring.cloud.compatibility-verifier.enabled=false",
+            "-Xms256m",
+            "-Xmx512m",
+            "-XX:+UseG1GC",
+            "-XX:MaxMetaspaceSize=256m"
+        )
     }
 }

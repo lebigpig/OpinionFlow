@@ -1,5 +1,10 @@
 server:
   port: 9201
+  tomcat:
+    threads:
+      max: 200
+    max-connections: 8192
+    accept-count: 100
 
 logging:
   level:
@@ -36,3 +41,17 @@ spring:
       host: ${REDIS_HOST:127.0.0.1}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASS:}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health,metrics
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    web:
+      server:
+        auto-time-requests: true
+    tomcat:
+      enable: true

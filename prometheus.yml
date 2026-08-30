@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+#        自监控,以便排查grafana无法显示数据的问题
+
+  - job_name: 'opinionflow-news'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['172.17.208.1:9201']

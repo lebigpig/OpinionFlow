@@ -23,7 +23,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-starter-cache")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
-
+    implementation("io.micrometer:micrometer-registry-prometheus")
     // Nacos 服务发现
     implementation("com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-discovery")
 
