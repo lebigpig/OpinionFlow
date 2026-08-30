@@ -23,7 +23,10 @@ class AiParseService(
     @Value("\${opinionflow.ai.model:gpt-4o-mini}") private val model: String,
 ) {
     private val restClient: RestClient = RestClient.builder().build()
-    private val httpClient: HttpClient = HttpClient.newBuilder().build()
+    private val httpClient: HttpClient = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(java.time.Duration.ofSeconds(30))
+        .build()
 
     fun parse(content: String, systemPrompt: String? = null): String {
         val trimmed = content.trim()
@@ -54,30 +57,37 @@ class AiParseService(
             )
         }
 
-        val spec = restClient.post()
-            .uri(chatCompletionsUrl())
-            .contentType(MediaType.APPLICATION_JSON)
-            .headers { headers ->
-                if (apiKey.isNotBlank()) {
-                    headers.set(HttpHeaders.AUTHORIZATION, "Bearer $apiKey")
-                }
-            }
-            .body(body.toString())
-
-        val response: String
-        try {
-            response = spec.retrieve().body(String::class.java)
-                ?: error("AI 接口返回空响应")
-        } catch (e: org.springframework.web.client.RestClientResponseException) {
-            val body = try { e.responseBodyAsString } catch (_: Exception) { "" }
-            error("AI 接口错误 HTTP ${e.statusCode?.value()}: $body")
-        } catch (e: org.springframework.http.converter.HttpMessageConversionException) {
-            error("AI 接口响应解析失败：${e.message}")
-        } catch (e: Exception) {
-            error("AI 接口调用失败：${e.message}")
+        val requestBuilder = HttpRequest.newBuilder()
+            .uri(URI.create(chatCompletionsUrl()))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+        if (apiKey.isNotBlank()) {
+            requestBuilder.header(HttpHeaders.AUTHORIZATION, "Bearer $apiKey")
         }
+        val request = requestBuilder
+            .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+            .build()
 
-        val root = objectMapper.readTree(response)
+        var response: HttpResponse<String>? = null
+        try {
+            // 用 HttpClient 直接读字符串，彻底绕开 RestClient converter 的 JSON→String/byte[] 问题
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+        } catch (e: Exception) {
+            // Connection reset 等临时网络错误：重试一次
+            try {
+                response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+            } catch (e2: Exception) {
+                error("AI 接口调用失败：${e2.message}")
+            }
+        }
+        val res = response ?: error("AI 接口调用失败")
+        if (res.statusCode() !in 200..299) {
+            error("AI 接口错误 HTTP ${res.statusCode()}: ${res.body()}")
+        }
+        val responseText = res.body().trim()
+        if (responseText.isEmpty()) error("AI 接口返回空响应")
+
+        val root = objectMapper.readTree(responseText)
         val text = root.path("choices").path(0).path("message").path("content").asText(null)
         if (!text.isNullOrBlank()) {
             return text.trim()
