@@ -39,7 +39,7 @@ spring:
         - id: echart
           uri: lb://opinionflow-echart
           predicates:
-            - Path=/api/echart/**,/api/map-markers/**
+            - Path=/api/echart/**,/api/map-markers/**,/api/country-macro-indicators/**
 
         # ── RAG 服务 ──
         - id: rag

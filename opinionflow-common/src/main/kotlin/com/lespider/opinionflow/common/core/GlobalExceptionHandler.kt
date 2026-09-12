@@ -2,10 +2,12 @@ package com.lespider.opinionflow.common.core
 
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.server.ResponseStatusException
 
 /**
  * 全局异常处理器
@@ -20,6 +22,19 @@ class GlobalExceptionHandler {
     fun handleIllegalArgument(e: IllegalArgumentException): Result<Nothing> {
         log.warn("参数错误: {}", e.message)
         return Result.fail(400, e.message ?: "参数错误")
+    }
+
+    @ExceptionHandler(ResponseStatusException::class)
+    fun handleResponseStatus(e: ResponseStatusException): ResponseEntity<Result<Nothing>> {
+        val status = e.statusCode.value()
+        if (status >= 500) {
+            log.error("请求处理异常: status={}, reason={}", status, e.reason, e)
+        } else {
+            log.warn("请求处理异常: status={}, reason={}", status, e.reason)
+        }
+        return ResponseEntity
+            .status(e.statusCode)
+            .body(Result.fail(status, e.reason ?: "请求错误"))
     }
 
     @ExceptionHandler(MethodArgumentNotValidException::class)
