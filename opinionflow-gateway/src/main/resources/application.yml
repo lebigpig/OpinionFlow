@@ -46,3 +46,9 @@ spring:
           uri: lb://opinionflow-rag
           predicates:
             - Path=/api/rag/**
+
+        # ── 企业服务（中国企业财报，company_china 库）──
+        - id: company
+          uri: lb://opinionflow-company
+          predicates:
+            - Path=/api/company/**
