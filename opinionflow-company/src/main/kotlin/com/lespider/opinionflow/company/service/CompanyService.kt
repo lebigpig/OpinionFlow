@@ -13,8 +13,11 @@ import com.lespider.opinionflow.company.repo.FinancialIndicatorValueRepository
 import com.lespider.opinionflow.company.repo.FinancialReportRepository
 import com.lespider.opinionflow.company.repo.IncomeStatementRepository
 import jakarta.persistence.Tuple
+import jakarta.persistence.criteria.Predicate
 import java.math.BigDecimal
 import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
+import org.springframework.data.jpa.domain.Specification
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
@@ -32,25 +35,61 @@ class CompanyService(
     private val indicatorRepository: FinancialIndicatorValueRepository,
 ) {
 
-    /** 公司列表（关键字模糊匹配股票代码 / 公司名称，分页） */
+    /** 公司列表：关键字模糊匹配（股票代码/公司名称）+ 行业筛选 + 排序（股票代码/全称/简称/交易所/行业），分页 */
     @Transactional(readOnly = true)
-    fun listCompanies(keyword: String?, page: Int, size: Int): Map<String, Any?> {
+    fun listCompanies(
+        keyword: String?,
+        industry: String?,
+        page: Int,
+        size: Int,
+        sortBy: String?,
+        sortDir: String?,
+    ): Map<String, Any?> {
         val p = page.coerceAtLeast(0)
         val s = size.coerceIn(1, 500)
         val kw = keyword?.trim().orEmpty()
-        val pageable = PageRequest.of(p, s)
-        val result = if (kw.isEmpty()) {
-            companyRepository.findAll(pageable)
-        } else {
-            companyRepository.findByCompanyCodeContainingIgnoreCaseOrCompanyNameContainingIgnoreCase(kw, kw, pageable)
+        val ind = industry?.trim().orEmpty()
+
+        // 白名单：只允许对前端表格列排序（避免任意字段注入）
+        val field = when (sortBy) {
+            "companyCode", "companyName", "shortName", "exchange", "industry" -> sortBy
+            else -> "companyCode"
         }
+        val desc = sortDir?.lowercase() == "desc"
+        val dir = if (desc) Sort.Direction.DESC else Sort.Direction.ASC
+        val pageable = PageRequest.of(p, s, Sort.by(dir, field))
+
+        // 动态条件：关键字（股票代码/公司名称，忽略大小写） + 行业精确匹配
+        val spec = Specification<Company> { root, _, cb ->
+            val preds = mutableListOf<Predicate>()
+            if (kw.isNotEmpty()) {
+                val like = "%${kw.lowercase()}%"
+                preds.add(
+                    cb.or(
+                        cb.like(cb.lower(root.get<String>("companyCode")), like),
+                        cb.like(cb.lower(root.get<String>("companyName")), like),
+                    ),
+                )
+            }
+            if (ind.isNotEmpty()) {
+                preds.add(cb.equal(root.get<String>("industry"), ind))
+            }
+            cb.and(*preds.toTypedArray())
+        }
+        val result = companyRepository.findAll(spec, pageable)
         return linkedMapOf(
             "total" to result.totalElements,
             "page" to p,
             "size" to s,
+            "sortBy" to field,
+            "sortDir" to if (desc) "desc" else "asc",
             "list" to result.content.map { companyToMap(it) },
         )
     }
+
+    /** 全部所属行业（去重、升序，供前端下拉框选择） */
+    @Transactional(readOnly = true)
+    fun listIndustries(): List<String> = companyRepository.findDistinctIndustries()
 
     /** 公司详情 */
     @Transactional(readOnly = true)
