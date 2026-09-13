@@ -100,4 +100,134 @@ interface FinancialReportRepository : JpaRepository<FinancialReport, Long> {
         nativeQuery = true,
     )
     fun findStatementUnionRows(@Param("reportId") reportId: Long): List<Tuple>
+
+    /**
+     * 【连接查询 3】某指标的历史走势：
+     * financial_indicator_value JOIN financial_report JOIN company
+     * 返回该指标在全部财报（各季度/年度）中的本期值、上期值、同比，
+     * 按财年、期间（Q1<Q2<H1<Q3<Q4<FY）升序，天然满足"从左往右排列历史"。
+     */
+    @Query(
+        value = """
+            SELECT
+                r.fiscal_year                                    AS fiscal_year,
+                r.fiscal_period                                  AS fiscal_period,
+                r.report_type                                    AS report_type,
+                v.indicator_code                                 AS indicator_code,
+                v.indicator_name                                 AS indicator_name,
+                v.indicator_value                                AS indicator_value,
+                v.value_previous                                 AS value_previous,
+                v.yoy_change                                     AS yoy_change
+            FROM financial_indicator_value v
+            JOIN financial_report r ON r.id = v.report_id
+            JOIN company c ON c.id = r.company_id
+            WHERE c.id = :companyId AND v.indicator_code = :indicatorCode
+            ORDER BY r.fiscal_year ASC,
+                CASE r.fiscal_period
+                    WHEN 'Q1' THEN 1 WHEN 'Q2' THEN 2 WHEN 'H1' THEN 3
+                    WHEN 'Q3' THEN 4 WHEN 'Q4' THEN 5 WHEN 'FY' THEN 6
+                    ELSE 99 END ASC,
+                r.id ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findIndicatorHistoryRows(
+        @Param("companyId") companyId: Long,
+        @Param("indicatorCode") indicatorCode: String,
+    ): List<Tuple>
+
+    /**
+     * 【连接查询 4】利润表某一科目的历史走势：
+     * income_statement JOIN financial_report JOIN company，
+     * 返回该科目在全部财报中的本期值、上期值，按财年、期间（Q1<Q2<H1<Q3<Q4<FY）升序。
+     */
+    @Query(
+        value = """
+            SELECT
+                r.fiscal_year                                    AS fiscal_year,
+                r.fiscal_period                                  AS fiscal_period,
+                r.report_type                                    AS report_type,
+                s.item_name                                      AS item_name,
+                s.unit                                           AS unit,
+                s.value_current                                  AS value_current,
+                s.value_previous                                 AS value_previous
+            FROM income_statement s
+            JOIN financial_report r ON r.id = s.report_id
+            JOIN company c ON c.id = r.company_id
+            WHERE c.id = :companyId AND s.item_name = :itemName
+            ORDER BY r.fiscal_year ASC,
+                CASE r.fiscal_period
+                    WHEN 'Q1' THEN 1 WHEN 'Q2' THEN 2 WHEN 'H1' THEN 3
+                    WHEN 'Q3' THEN 4 WHEN 'Q4' THEN 5 WHEN 'FY' THEN 6
+                    ELSE 99 END ASC,
+                s.sort_order ASC, s.id ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findIncomeHistoryRows(
+        @Param("companyId") companyId: Long,
+        @Param("itemName") itemName: String,
+    ): List<Tuple>
+
+    /**
+     * 【连接查询 5】资产负债表某一科目的历史走势（结构同 income）。
+     */
+    @Query(
+        value = """
+            SELECT
+                r.fiscal_year                                    AS fiscal_year,
+                r.fiscal_period                                  AS fiscal_period,
+                r.report_type                                    AS report_type,
+                s.item_name                                      AS item_name,
+                s.unit                                           AS unit,
+                s.value_current                                  AS value_current,
+                s.value_previous                                 AS value_previous
+            FROM balance_sheet s
+            JOIN financial_report r ON r.id = s.report_id
+            JOIN company c ON c.id = r.company_id
+            WHERE c.id = :companyId AND s.item_name = :itemName
+            ORDER BY r.fiscal_year ASC,
+                CASE r.fiscal_period
+                    WHEN 'Q1' THEN 1 WHEN 'Q2' THEN 2 WHEN 'H1' THEN 3
+                    WHEN 'Q3' THEN 4 WHEN 'Q4' THEN 5 WHEN 'FY' THEN 6
+                    ELSE 99 END ASC,
+                s.sort_order ASC, s.id ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findBalanceHistoryRows(
+        @Param("companyId") companyId: Long,
+        @Param("itemName") itemName: String,
+    ): List<Tuple>
+
+    /**
+     * 【连接查询 6】现金流量表某一科目的历史走势（结构同 income）。
+     */
+    @Query(
+        value = """
+            SELECT
+                r.fiscal_year                                    AS fiscal_year,
+                r.fiscal_period                                  AS fiscal_period,
+                r.report_type                                    AS report_type,
+                s.item_name                                      AS item_name,
+                s.unit                                           AS unit,
+                s.value_current                                  AS value_current,
+                s.value_previous                                 AS value_previous
+            FROM cash_flow_statement s
+            JOIN financial_report r ON r.id = s.report_id
+            JOIN company c ON c.id = r.company_id
+            WHERE c.id = :companyId AND s.item_name = :itemName
+            ORDER BY r.fiscal_year ASC,
+                CASE r.fiscal_period
+                    WHEN 'Q1' THEN 1 WHEN 'Q2' THEN 2 WHEN 'H1' THEN 3
+                    WHEN 'Q3' THEN 4 WHEN 'Q4' THEN 5 WHEN 'FY' THEN 6
+                    ELSE 99 END ASC,
+                s.sort_order ASC, s.id ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findCashFlowHistoryRows(
+        @Param("companyId") companyId: Long,
+        @Param("itemName") itemName: String,
+    ): List<Tuple>
 }

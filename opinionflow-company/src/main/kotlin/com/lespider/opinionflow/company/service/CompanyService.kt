@@ -150,6 +150,72 @@ class CompanyService(
         )
     }
 
+    /** 某指标的历史走势：该指标在所有财报（各季度/年度）中的本期值、上期值、同比（财年/期间升序，即时间从左往右） */
+    @Transactional(readOnly = true)
+    fun getIndicatorHistory(companyId: Long, indicatorCode: String): Map<String, Any?> {
+        val rows = reportRepository.findIndicatorHistoryRows(companyId, indicatorCode)
+        val points = rows.map { row ->
+            linkedMapOf(
+                "fiscalYear" to num(row, "fiscal_year")?.toInt(),
+                "fiscalPeriod" to str(row, "fiscal_period"),
+                "reportType" to str(row, "report_type"),
+                "indicatorCode" to str(row, "indicator_code"),
+                "indicatorName" to str(row, "indicator_name"),
+                "indicatorValue" to plainAny(row, "indicator_value"),
+                "valuePrevious" to plainAny(row, "value_previous"),
+                "yoyChange" to plainAny(row, "yoy_change"),
+            )
+        }
+        val head = points.firstOrNull()
+        if (head == null) {
+            return linkedMapOf(
+                "companyId" to companyId,
+                "indicatorCode" to indicatorCode,
+                "indicatorName" to null,
+                "unit" to null,
+                "points" to emptyList<Map<String, Any?>>(),
+            )
+        }
+        return linkedMapOf(
+            "companyId" to companyId,
+            "indicatorCode" to indicatorCode,
+            "indicatorName" to head["indicatorName"],
+            "unit" to null,
+            "points" to points,
+        )
+    }
+
+    /** 某一科目（利润表/资产负债表/现金流量表之一）的历史走势：该科目在所有财报中的本期值、上期值（财年/期间升序） */
+    @Transactional(readOnly = true)
+    fun getStatementHistory(companyId: Long, tableType: String, itemName: String): Map<String, Any?> {
+        val rows: List<Tuple> = if (tableType == "income") {
+            reportRepository.findIncomeHistoryRows(companyId, itemName)
+        } else if (tableType == "balance") {
+            reportRepository.findBalanceHistoryRows(companyId, itemName)
+        } else if (tableType == "cashflow") {
+            reportRepository.findCashFlowHistoryRows(companyId, itemName)
+        } else {
+            emptyList()
+        }
+        val points = rows.map { row ->
+            linkedMapOf(
+                "fiscalYear" to num(row, "fiscal_year")?.toInt(),
+                "fiscalPeriod" to str(row, "fiscal_period"),
+                "reportType" to str(row, "report_type"),
+                "itemName" to str(row, "item_name"),
+                "unit" to str(row, "unit"),
+                "valueCurrent" to plainAny(row, "value_current"),
+                "valuePrevious" to plainAny(row, "value_previous"),
+            )
+        }
+        return linkedMapOf(
+            "companyId" to companyId,
+            "tableType" to tableType,
+            "itemName" to itemName,
+            "points" to points,
+        )
+    }
+
     private fun companyToMap(c: Company): Map<String, Any?> = linkedMapOf(
         "id" to (c.id ?: 0L),
         "companyCode" to c.companyCode,

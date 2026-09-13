@@ -71,4 +71,19 @@ class CompanyController(
     @GetMapping("/reports/{reportId}/indicators")
     fun indicators(@PathVariable reportId: Long): List<Map<String, Any?>> =
         companyService.listIndicators(reportId)
+
+    /** 某指标的历史走势：该指标在所有财报（各季度/年度）中的本期值、上期值、同比（时间升序） */
+    @GetMapping("/{companyId}/indicators/{indicatorCode}/history")
+    fun indicatorHistory(
+        @PathVariable companyId: Long,
+        @PathVariable indicatorCode: String,
+    ): Map<String, Any?> = companyService.getIndicatorHistory(companyId, indicatorCode)
+
+    /** 某一科目（利润表/资产负债表/现金流量表）的历史走势：该科目在所有财报中的本期值、上期值（时间升序） */
+    @GetMapping("/{companyId}/statements/{tableType}/history")
+    fun statementHistory(
+        @PathVariable companyId: Long,
+        @PathVariable tableType: String,
+        @RequestParam itemName: String,
+    ): Map<String, Any?> = companyService.getStatementHistory(companyId, tableType, itemName)
 }
