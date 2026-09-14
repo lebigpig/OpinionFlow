@@ -224,6 +224,84 @@ class CompanyService(
         )
     }
 
+    /**
+     * 同行业公司横向对比：同一指标 + 同一期间（财年/季度）下，同行业所有公司的指标值
+     * industry 为空表示不限定行业（比较全部公司）
+     */
+    @Transactional(readOnly = true)
+    fun getPeerIndicatorCompare(
+        indicatorCode: String,
+        industry: String?,
+        fiscalYear: Int,
+        fiscalPeriod: String,
+    ): Map<String, Any?> {
+        val ind = industry?.trim().orEmpty()
+        val rows = reportRepository.findPeerIndicatorRows(indicatorCode, fiscalYear, fiscalPeriod, ind)
+        val list = rows.map { row ->
+            linkedMapOf(
+                "companyId" to num(row, "company_id")?.toLong(),
+                "companyCode" to str(row, "company_code"),
+                "companyName" to str(row, "company_name"),
+                "shortName" to str(row, "short_name"),
+                "industry" to str(row, "industry"),
+                "indicatorValue" to plainAny(row, "indicator_value"),
+                "valuePrevious" to plainAny(row, "value_previous"),
+                "yoyChange" to plainAny(row, "yoy_change"),
+            )
+        }
+        return linkedMapOf(
+            "indicatorCode" to indicatorCode,
+            "industry" to ind.ifEmpty { null },
+            "fiscalYear" to fiscalYear,
+            "fiscalPeriod" to fiscalPeriod,
+            "count" to list.size,
+            "list" to list,
+        )
+    }
+
+    /**
+     * 同行业「某一科目」横向对比（利润表 / 资产负债表 / 现金流量表）：
+     * 同一科目 + 同一期间（财年/季度）下，同行业各公司的本期值
+     * industry 为空表示不限定行业（比较全部公司）
+     */
+    @Transactional(readOnly = true)
+    fun getPeerStatementCompare(
+        tableType: String,
+        itemName: String,
+        industry: String?,
+        fiscalYear: Int,
+        fiscalPeriod: String,
+    ): Map<String, Any?> {
+        val ind = industry?.trim().orEmpty()
+        val rows: List<Tuple> = when (tableType) {
+            "income" -> reportRepository.findIncomePeerRows(itemName, fiscalYear, fiscalPeriod, ind)
+            "balance" -> reportRepository.findBalancePeerRows(itemName, fiscalYear, fiscalPeriod, ind)
+            "cashflow" -> reportRepository.findCashFlowPeerRows(itemName, fiscalYear, fiscalPeriod, ind)
+            else -> emptyList()
+        }
+        val list = rows.map { row ->
+            linkedMapOf(
+                "companyId" to num(row, "company_id")?.toLong(),
+                "companyCode" to str(row, "company_code"),
+                "companyName" to str(row, "company_name"),
+                "shortName" to str(row, "short_name"),
+                "industry" to str(row, "industry"),
+                "valueCurrent" to plainAny(row, "value_current"),
+                "valuePrevious" to plainAny(row, "value_previous"),
+                "unit" to str(row, "unit"),
+            )
+        }
+        return linkedMapOf(
+            "tableType" to tableType,
+            "itemName" to itemName,
+            "industry" to ind.ifEmpty { null },
+            "fiscalYear" to fiscalYear,
+            "fiscalPeriod" to fiscalPeriod,
+            "count" to list.size,
+            "list" to list,
+        )
+    }
+
     /** 某一科目（利润表/资产负债表/现金流量表之一）的历史走势：该科目在所有财报中的本期值、上期值（财年/期间升序） */
     @Transactional(readOnly = true)
     fun getStatementHistory(companyId: Long, tableType: String, itemName: String): Map<String, Any?> {

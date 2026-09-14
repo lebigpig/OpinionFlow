@@ -86,6 +86,32 @@ class CompanyController(
         @PathVariable indicatorCode: String,
     ): Map<String, Any?> = companyService.getIndicatorHistory(companyId, indicatorCode)
 
+    /**
+     * 同行业公司横向对比：点击走势图某季度柱子后调用
+     * 取「同一指标 + 同一财年/季度」下同行业所有公司的指标值（按值降序）
+     */
+    @GetMapping("/indicators/{indicatorCode}/peer-compare")
+    fun peerCompare(
+        @PathVariable indicatorCode: String,
+        @RequestParam(required = false) industry: String?,
+        @RequestParam fiscalYear: Int,
+        @RequestParam fiscalPeriod: String,
+    ): Map<String, Any?> = companyService.getPeerIndicatorCompare(indicatorCode, industry, fiscalYear, fiscalPeriod)
+
+    /**
+     * 同行业「某一科目」横向对比（利润表 / 资产负债表 / 现金流量表）：
+     * 点击三张报表走势图某季度柱子后调用
+     */
+    @GetMapping("/statements/{tableType}/peer-compare")
+    fun statementPeerCompare(
+        @PathVariable tableType: String,
+        @RequestParam itemName: String,
+        @RequestParam(required = false) industry: String?,
+        @RequestParam fiscalYear: Int,
+        @RequestParam fiscalPeriod: String,
+    ): Map<String, Any?> =
+        companyService.getPeerStatementCompare(tableType, itemName, industry, fiscalYear, fiscalPeriod)
+
     /** 某一科目（利润表/资产负债表/现金流量表）的历史走势：该科目在所有财报中的本期值、上期值（时间升序） */
     @GetMapping("/{companyId:\\d+}/statements/{tableType}/history")
     fun statementHistory(

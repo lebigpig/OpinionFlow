@@ -230,4 +230,137 @@ interface FinancialReportRepository : JpaRepository<FinancialReport, Long> {
         @Param("companyId") companyId: Long,
         @Param("itemName") itemName: String,
     ): List<Tuple>
+
+    /**
+     * 【连接查询 7】同行业公司横向对比：
+     * financial_indicator_value JOIN financial_report JOIN company，
+     * 取「同一指标 + 同一期间（财年/季度）」下，同一行业所有公司的指标值，
+     * 按指标值降序（用于点击走势图某季度柱子后的同业对比）。
+     * industry 传空串表示不限定行业（比较全部公司）。
+     */
+    @Query(
+        value = """
+            SELECT
+                c.id                AS company_id,
+                c.company_code      AS company_code,
+                c.company_name      AS company_name,
+                c.short_name        AS short_name,
+                c.industry          AS industry,
+                v.indicator_value   AS indicator_value,
+                v.value_previous    AS value_previous,
+                v.yoy_change        AS yoy_change
+            FROM financial_indicator_value v
+            JOIN financial_report r ON r.id = v.report_id
+            JOIN company c ON c.id = r.company_id
+            WHERE v.indicator_code = :indicatorCode
+              AND r.fiscal_year = :fiscalYear
+              AND r.fiscal_period = :fiscalPeriod
+              AND (:industry = '' OR c.industry = :industry)
+            ORDER BY v.indicator_value DESC, c.company_code ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findPeerIndicatorRows(
+        @Param("indicatorCode") indicatorCode: String,
+        @Param("fiscalYear") fiscalYear: Int,
+        @Param("fiscalPeriod") fiscalPeriod: String,
+        @Param("industry") industry: String,
+    ): List<Tuple>
+
+    /**
+     * 【连接查询 8】同行业「利润表科目」横向对比：
+     * 取「同一科目 + 同一财年/季度 + 同行业」下各公司的本期值，按值降序。
+     */
+    @Query(
+        value = """
+            SELECT
+                c.id                AS company_id,
+                c.company_code      AS company_code,
+                c.company_name      AS company_name,
+                c.short_name        AS short_name,
+                c.industry          AS industry,
+                s.value_current     AS value_current,
+                s.value_previous    AS value_previous,
+                s.unit              AS unit
+            FROM income_statement s
+            JOIN financial_report r ON r.id = s.report_id
+            JOIN company c ON c.id = r.company_id
+            WHERE s.item_name = :itemName
+              AND r.fiscal_year = :fiscalYear
+              AND r.fiscal_period = :fiscalPeriod
+              AND (:industry = '' OR c.industry = :industry)
+            ORDER BY s.value_current DESC, c.company_code ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findIncomePeerRows(
+        @Param("itemName") itemName: String,
+        @Param("fiscalYear") fiscalYear: Int,
+        @Param("fiscalPeriod") fiscalPeriod: String,
+        @Param("industry") industry: String,
+    ): List<Tuple>
+
+    /**
+     * 【连接查询 9】同行业「资产负债表科目」横向对比（结构同 income）。
+     */
+    @Query(
+        value = """
+            SELECT
+                c.id                AS company_id,
+                c.company_code      AS company_code,
+                c.company_name      AS company_name,
+                c.short_name        AS short_name,
+                c.industry          AS industry,
+                s.value_current     AS value_current,
+                s.value_previous    AS value_previous,
+                s.unit              AS unit
+            FROM balance_sheet s
+            JOIN financial_report r ON r.id = s.report_id
+            JOIN company c ON c.id = r.company_id
+            WHERE s.item_name = :itemName
+              AND r.fiscal_year = :fiscalYear
+              AND r.fiscal_period = :fiscalPeriod
+              AND (:industry = '' OR c.industry = :industry)
+            ORDER BY s.value_current DESC, c.company_code ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findBalancePeerRows(
+        @Param("itemName") itemName: String,
+        @Param("fiscalYear") fiscalYear: Int,
+        @Param("fiscalPeriod") fiscalPeriod: String,
+        @Param("industry") industry: String,
+    ): List<Tuple>
+
+    /**
+     * 【连接查询 10】同行业「现金流量表科目」横向对比（结构同 income）。
+     */
+    @Query(
+        value = """
+            SELECT
+                c.id                AS company_id,
+                c.company_code      AS company_code,
+                c.company_name      AS company_name,
+                c.short_name        AS short_name,
+                c.industry          AS industry,
+                s.value_current     AS value_current,
+                s.value_previous    AS value_previous,
+                s.unit              AS unit
+            FROM cash_flow_statement s
+            JOIN financial_report r ON r.id = s.report_id
+            JOIN company c ON c.id = r.company_id
+            WHERE s.item_name = :itemName
+              AND r.fiscal_year = :fiscalYear
+              AND r.fiscal_period = :fiscalPeriod
+              AND (:industry = '' OR c.industry = :industry)
+            ORDER BY s.value_current DESC, c.company_code ASC
+        """,
+        nativeQuery = true,
+    )
+    fun findCashFlowPeerRows(
+        @Param("itemName") itemName: String,
+        @Param("fiscalYear") fiscalYear: Int,
+        @Param("fiscalPeriod") fiscalPeriod: String,
+        @Param("industry") industry: String,
+    ): List<Tuple>
 }
