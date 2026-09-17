@@ -76,7 +76,12 @@ class TavilyWebSearchService(
                 return ""
             }
 
-            val json = objectMapper.readTree(response.body())
+            // 打印 HTTP 原始响应，便于确认"到底联网搜回了什么"
+            val rawBody = response.body()
+            val rawForLog = if (rawBody.length <= 2000) rawBody else rawBody.take(2000) + "...(共 ${rawBody.length} 字符，已截断)"
+            log.info("[Tavily] HTTP 原始响应({} 字符，{}): {}", rawBody.length, "$baseUrl/search", rawForLog)
+
+            val json = objectMapper.readTree(rawBody)
             formatSearchResults(json)
         } catch (e: Exception) {
             log.error("Tavily 搜索异常: {}", e.message, e)

@@ -22,7 +22,11 @@ class TavilySearchTool(
             log.warn("[Agent Tool] 搜索无结果: query='{}'", query)
             return "未搜索到相关结果，请尝试使用不同的关键词。"
         }
-        log.info("[Agent Tool] 搜索完成，返回 {} 字符", result.length)
+        log.info(
+            "[Agent Tool] 搜索完成，返回 {} 字符\n{}",
+            result.length,
+            if (result.length <= 3000) result else result.take(3000) + "...(共 ${result.length} 字符，已截断)",
+        )
         return result
     }
 }

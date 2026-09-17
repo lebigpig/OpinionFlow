@@ -22,6 +22,8 @@ class ScriptRunnerService(
     private val newsPath: String,
     @Value("\${opinionflow.scripts.realtime-path:}")
     private val realtimePath: String,
+    @Value("\${opinionflow.scripts.finance-path:}")
+    private val financePath: String,
 ) {
     private fun normalizeScriptPath(raw: String): String {
         val s = raw.trim()
@@ -45,7 +47,7 @@ class ScriptRunnerService(
         return s
     }
 
-    fun run(key: String, code: String? = null): ScriptRunResponse {
+    fun run(key: String, code: String? = null, symbol: String? = null): ScriptRunResponse {
         val t0 = System.currentTimeMillis()
         if (!enabled) {
             return ScriptRunResponse(
@@ -60,6 +62,7 @@ class ScriptRunnerService(
             "comments" -> commentPath
             "news" -> newsPath
             "realtime" -> realtimePath
+            "finance" -> financePath
             else -> ""
         }.trim()
 
@@ -115,6 +118,16 @@ class ScriptRunnerService(
             if (key == "comments" && !code.isNullOrBlank()) {
                 cmd.add("--code")
                 cmd.add(code)
+            }
+            if (key == "finance") {
+                if (!symbol.isNullOrBlank()) {
+                    cmd.add("--symbol")
+                    cmd.add(symbol)
+                }
+                if (!code.isNullOrBlank()) {
+                    cmd.add("--params")
+                    cmd.add(code)
+                }
             }
             stdoutAll.appendLine("CMD: ${cmd.joinToString(" ")}")
 
@@ -189,6 +202,7 @@ class ScriptRunnerService(
     fun runStream(
         key: String,
         code: String? = null,
+        symbol: String? = null,
         onMeta: (String) -> Unit = {},
         onStdout: (String) -> Unit = {},
         onStderr: (String) -> Unit = {},
@@ -207,6 +221,7 @@ class ScriptRunnerService(
             "comments" -> commentPath
             "news" -> newsPath
             "realtime" -> realtimePath
+            "finance" -> financePath
             else -> ""
         }.trim()
 
@@ -267,6 +282,16 @@ class ScriptRunnerService(
             if (key == "comments" && !code.isNullOrBlank()) {
                 cmd.add("--code")
                 cmd.add(code)
+            }
+            if (key == "finance") {
+                if (!symbol.isNullOrBlank()) {
+                    cmd.add("--symbol")
+                    cmd.add(symbol)
+                }
+                if (!code.isNullOrBlank()) {
+                    cmd.add("--params")
+                    cmd.add(code)
+                }
             }
             val cmdLine = "CMD: ${cmd.joinToString(" ")}"
             onMeta(cmdLine)

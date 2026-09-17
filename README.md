@@ -365,11 +365,12 @@ opinionflow:
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/chat-memory/history` | 获取对话历史列表 |
-| GET | `/api/chat-memory/history/{sessionId}` | 获取指定会话历史 |
-| POST | `/api/chat-memory/send` | 发送消息（SSE 流式回复） |
-| DELETE | `/api/chat-memory/history/{sessionId}` | 删除指定会话 |
-| DELETE | `/api/chat-memory/history` | 清空所有对话历史 |
+| GET | `/api/chat-memory/sessions` | 获取所有会话摘要列表 |
+| POST | `/api/chat-memory/new-session` | 创建新会话 |
+| POST | `/api/chat-memory/chat` | 带记忆流式对话（SSE；支持 `agentMode=company-expert` 中国企业专家 Agent） |
+| GET | `/api/chat-memory/history` | 获取指定会话历史 |
+| POST | `/api/chat-memory/clear` | 清除指定会话历史 |
+| DELETE | `/api/chat-memory/session/{sessionId}` | 删除指定会话 |
 
 ### 爬虫 & 评论接口（opinionflow-spider → `/api/scripts/`）
 
@@ -405,15 +406,88 @@ opinionflow:
 
 ## 🧩 脚本运行说明
 
-脚本运行功能支持 3 种 key：
+脚本运行功能支持 4 种 key：
 
 | Key | 说明 | 是否需要股票代码 |
 |-----|------|----------------|
 | `comments` | 评论爬取 | ✅ 需要 |
 | `news` | 新闻爬取 | ❌ 不需要 |
 | `realtime` | 实时爬取 | ❌ 不需要 |
+| `finance` | AkShare 财务数据查询（中国企业专家 Agent 使用） | ✅ 需要（`symbol` 参数） |
 
 每个 key 支持配置多个脚本路径（用英文逗号或分号分隔），按顺序依次执行。
+
+> **finance 脚本示例**：`dev/scripts/akshare_finance.py`，支持 `--symbol 600519 --mode info|spot|hist|news|industry [--start 20240101] [--end 20241231]`。
+> 需要在 `key.properties` 中配置 `opinionflow.scripts.finance-path=D:/.../akshare_finance.py`。
+
+---
+
+## 🇨🇳 中国企业专家 Agent
+
+AI 服务在「企业 → 中国企业」页面（`opinionflow-vue/src/views/CompanyChina.vue`）提供**中国企业专家 Agent**，AI 可自主调用以下工具：
+
+| 工具 | 数据来源 | 说明 |
+|------|---------|------|
+| `queryCompany` / `queryCompanyDetail` | opinionflow-company（company_china 库） | 公司基础信息、财报列表 |
+| `queryIncomeStatement` / `queryBalanceSheet` / `queryCashFlow` | opinionflow-company | 利润表 / 资产负债表 / 现金流量表 |
+| `queryFinancialIndicators` / `queryIndicatorHistory` | opinionflow-company | 财务指标与历史走势 |
+| `queryPeerCompare` | opinionflow-company | 同行业指标横向对比 |
+| `searchFinanceNews` / `searchGeneralNews` / `getFinanceNewsDetail` | opinionflow-news 新闻库 | 检索已采集新闻 |
+| `webSearch` | Tavily 联网搜索 | 实时外部信息 |
+| `tushareQuery` | Tushare HTTP API | 股票历史行情、个股财务等（需 token） |
+| `sinaQuote` | 新浪财经 HTTP API | 免费实时行情 |
+| `akshareQuery` | AkShare Python（经 spider 脚本） | 个股信息/行情/新闻/行业数据 |
+
+### 如何启用
+
+**前端（已接入）**：「企业 → 中国企业」页面顶部内置 **🤖 中国企业专家 Agent** 面板，无需手工调用接口：
+
+- 入口：公司列表行「🤖 分析」、详情面板「🤖 AI 分析」→ 把该公司设为对话目标（会话 id 自动切换为 `company_china_<股票代码>`）并预填问题；
+- 发送：输入问题后 `Ctrl+Enter` 或「发送给 Agent」；AI 流式输出（SSE）；
+- 会话隔离：按公司建会话（`company_china_<股票代码>`），同一家公司多轮追问共享记忆；点击历史公司自动切会话并载入 MySQL 历史；
+- 面板按钮：「新对话」（切到带时间戳的新会话，不删历史）/「刷新对话」（重载历史）/「刷新会话」（重列 `company_china*` 会话）/「清除记忆」（清 MySQL+Redis）/「收起」；
+- Tushare token 可选：填在面板输入框内，仅存浏览器 localStorage，随请求 `externalApiKeys.tushareToken` 传入；留空则用 `key.properties` 配置。
+
+相关前端文件：
+
+| 文件 | 作用 |
+|------|------|
+| `opinionflow-vue/src/views/CompanyChina.vue` | Agent 面板 UI（消息气泡复用 `assets/main.css` 的 `wechat*` 样式，含深色模式） |
+| `opinionflow-vue/src/stores/CompanyAgentStore.js` | Agent 状态：会话隔离 / 消息流 / 历史会话 / key 管理 |
+| `opinionflow-vue/src/lib/api.js` → `chatMemoryStream` | 请求封送（新增 `agentMode`、`externalApiKeys` 参数） |
+
+**接口直调（调试用）**：`POST /api/chat-memory/chat`（网关路由规则为 `/api/chat-memory/**`），请求体参数：
+
+```json
+{
+  "sessionId": "company_china_600519",
+  "content": "分析一下贵州茅台的财务状况和近期新闻",
+  "agentMode": "company-expert",
+  "externalApiKeys": { "tushareToken": "optional-tushare-token" }
+}
+```
+
+- `agentMode`：`"company-expert"` 开启中国企业专家 Agent；不传则维持原有行为（`webSearch=true` 时绑定 Tavily）。
+- `externalApiKeys`：可选，本次请求有效（不持久化），优先级高于配置文件；Tushare token 未传入时回退到 `key.properties` 中的 `opinionflow.finance.tushare-token`。
+
+### 配置项
+
+| 配置 | 位置 | 说明 |
+|------|------|------|
+| `opinionflow.finance.tushare-token` | `key.properties` | Tushare token（前端传入可覆盖） |
+| `opinionflow.finance.tushare-base-url` | `key.properties` | Tushare 接口地址（默认 `https://api.tushare.pro`） |
+| `opinionflow.finance.sina-base-url` | `key.properties` | 新浪行情接口（默认 `https://hq.sinajs.cn/list=`） |
+| `opinionflow.scripts.finance-path` | `key.properties` | AkShare 财务脚本路径 |
+
+### 服务间调用
+
+AI 服务通过 Feign 调用其他服务（新增 Feign 客户端均放在 `opinionflow-api` 模块）：
+
+| Feign 客户端 | 目标服务 | 用途 |
+|-------------|---------|------|
+| `CompanyFeignClient` | opinionflow-company | 企业财报 |
+| `NewsFeignClient` | opinionflow-news | 新闻库检索 |
+| `SpiderScriptFeignClient` | opinionflow-spider | AkShare 脚本触发 |
 
 ---
 

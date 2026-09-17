@@ -56,12 +56,27 @@ opinionflow:
     max-results: 12
     search-depth: advanced
 
+  # 中国企业专家 Agent 外部财经数据源配置
+  finance:
+    # Tushare API token（可在前端 chat 请求 externalApiKeys.tushareToken 传入，未传时用此配置值）
+    # 在 key.properties 中配置 opinionflow.finance.tushare-token=你的token
+    tushare-token: ${opinionflow.finance.tushare-token:${tushare.api-key:}}
+    # Tushare HTTP 接口地址
+    tushare-base-url: ${opinionflow.finance.tushare-base-url:https://api.tushare.pro}
+    # 新浪财经实时行情接口（免费、无需 token）
+    sina-base-url: ${opinionflow.finance.sina-base-url:https://hq.sinajs.cn/list=}
+
 # Feign 配置（SSE 流式支持）
 spring.cloud.openfeign.client.config:
   default:
     connect-timeout: 5000
     read-timeout: 120000
     logger-level: full
+  # 企业财报接口（CompanyFeignClient）返回体过长，full 级别会在终端整段打印请求/响应，
+  # 此处单独关闭该客户端的 Feign 网络日志（超时等配置继续继承 default），其余客户端不受影响。
+  opinionflow-company:
+    logger-level: none
+
 
 logging:
   level:

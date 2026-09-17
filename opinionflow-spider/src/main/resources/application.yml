@@ -24,3 +24,14 @@ spring:
     show-sql: false
   config:
     import: optional:file:../key.properties
+
+# 脚本运行配置（Python 解释器 + 各脚本路径）
+opinionflow:
+  scripts:
+    enabled: ${opinionflow.scripts.enabled:false}
+    python: ${opinionflow.scripts.python:python}
+    comment-path: ${opinionflow.scripts.comment-path:}
+    news-path: ${opinionflow.scripts.news-path:}
+    realtime-path: ${opinionflow.scripts.realtime-path:}
+    # AkShare 财务数据脚本（中国企业专家 Agent 使用，AI 请求 key=finance 时执行）
+    finance-path: ${opinionflow.scripts.finance-path:}

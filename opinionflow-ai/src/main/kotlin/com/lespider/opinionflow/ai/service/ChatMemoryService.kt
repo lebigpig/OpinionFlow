@@ -7,6 +7,7 @@ import com.lespider.opinionflow.ai.repo.ChatHistoryRepository
 import com.lespider.opinionflow.api.rag.RagSearchRequest
 import com.lespider.opinionflow.api.rag.RagSearchResult
 import com.lespider.opinionflow.api.rag.RagFeignClient
+import dev.langchain4j.agent.tool.ToolExecutionRequest
 import dev.langchain4j.agent.tool.ToolSpecification
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema
 import dev.langchain4j.model.chat.request.json.JsonStringSchema
@@ -48,6 +49,12 @@ class ChatMemoryService(
     private val redisTemplate: StringRedisTemplate,
     private val ragFeignClient: RagFeignClient,
     private val tavilySearchTool: TavilySearchTool,
+    private val companyFinanceTool: CompanyFinanceTool,
+    private val newsSearchTool: NewsSearchTool,
+    private val tushareFinanceTool: TushareFinanceTool,
+    private val sinaFinanceTool: SinaFinanceTool,
+    private val akshareTool: AkShareTool,
+    private val companyAgentKeyManager: CompanyAgentKeyManager,
     @Value("\${opinionflow.ai.api-url:}") private val apiUrl: String,
     @Value("\${opinionflow.ai.api-key:}") private val apiKey: String,
     @Value("\${opinionflow.ai.model:gpt-4o-mini}") private val model: String,
@@ -141,15 +148,21 @@ class ChatMemoryService(
     /**
      * 核心方法：流式 AI 对话（支持记忆 + RAG + Agent 自主联网搜索）。
      *
-     * @param webSearch 是否启用 Agent 模式
+     * @param webSearch 是否启用通用 Agent 模式
      *                   - true: 绑定 TavilySearchTool，AI 自主决定是否联网搜索
      *                   - false: 传统纯文本对话（含 RAG 检索）
+     * @param agentMode Agent 模式：
+     *                   - null/"general"/"": 传统模式（webSearch=true 时绑定 Tavily 联网搜索）
+     *                   - "company-expert": 中国企业专家 Agent（绑定企业财报 + 新闻库 + Tavily + Tushare + 新浪财经 + AkShare 工具）
+     * @param externalApiKeys 外部 API Keys（如 Tushare token），仅本次请求有效，未传入时回退配置文件
      */
     fun chatWithMemory(
         sessionId: String,
         userMessage: String,
         selectedContent: String? = null,
         webSearch: Boolean = false,
+        agentMode: String? = null,
+        externalApiKeys: Map<String, String>? = null,
         onDelta: (String) -> Unit,
     ) {
         val trimmed = userMessage.trim()
@@ -169,21 +182,259 @@ class ChatMemoryService(
         // 3) 构建 LangChain4j 流式模型
         val streamingModel = buildStreamingModel()
 
-        if (webSearch && tavilyEnabled) {
-            // ★★★ Agent 模式：AI 可自主调用 Tavily 联网搜索 ★★★
-            log.info("[Agent] webSearch=true, tavilyEnabled=true → AI 可自主调用联网搜索")
-            chatWithAgent(sessionId, streamingModel, sysText, trimmed, onDelta)
-        } else {
-            // ★ 传统模式：直接流式调用（含 RAG，原有逻辑保留）
-            log.info("[Agent] webSearch={}, tavilyEnabled={} → 传统对话模式", webSearch, tavilyEnabled)
-            chatSimple(sessionId, streamingModel, sysText, onDelta)
-        }
+        // 4) 确定 Agent 模式（agentMode 优先，其次兼容 webSearch）
+        val mode = agentMode?.trim().orEmpty().lowercase().takeIf { it.isNotEmpty() } ?: "general"
 
-        // 8) 更新 Redis 缓存
-        invalidateCache(sessionId)
+        // 5) 注入外部 API Keys（中国企业专家 Agent 工具使用）
+        //    请求级作用域：工具决策/工具执行/SSE 输出都在本请求线程内完成，
+        //    结束后在 finally 中清理，避免并发请求互相串用 token 或残留 token 被后续请求复用。
+        companyAgentKeyManager.inject(externalApiKeys)
+        tushareFinanceTool.setRuntimeToken(
+            externalApiKeys?.get("tushareToken") ?: externalApiKeys?.get("tushare_token"),
+        )
+
+        try {
+            if (mode == "company-expert") {
+                // ★★★ 中国企业专家 Agent：AI 可自主调用企业财报/新闻库/Tavily/Tushare/新浪/AkShare 工具 ★★★
+                log.info("[Agent] agentMode=company-expert → 中国企业专家 Agent")
+                chatWithCompanyExpert(sessionId, streamingModel, sysText, trimmed, onDelta)
+            } else if (webSearch && tavilyEnabled) {
+                // ★★★ 通用 Agent 模式：AI 可自主调用 Tavily 联网搜索 ★★★
+                log.info("[Agent] webSearch=true, tavilyEnabled=true → AI 可自主调用联网搜索")
+                chatWithAgent(sessionId, streamingModel, sysText, trimmed, onDelta)
+            } else {
+                // ★ 传统模式：直接流式调用（含 RAG，原有逻辑保留）
+                log.info("[Agent] webSearch={}, tavilyEnabled={} → 传统对话模式", webSearch, tavilyEnabled)
+                chatSimple(sessionId, streamingModel, sysText, onDelta)
+            }
+
+            // 8) 更新 Redis 缓存
+            invalidateCache(sessionId)
+        } finally {
+            // 请求结束：清理请求级密钥，防止跨请求泄漏 / 串用
+            companyAgentKeyManager.clear()
+            tushareFinanceTool.clearRuntimeToken()
+        }
     }
 
     // ─── Agent 模式（手动工具调用循环）─────────────────────────
+
+    /**
+     * 中国企业专家 Agent：AI 自主决定调用企业财报 / 新闻库 / Tavily / Tushare / 新浪 / AkShare 工具。
+     *
+     * 采用与 chatWithAgent 相同的两阶段方案：
+     *   工具决策（非流式）→ AI 决定是否调用工具（支持多轮，最多 MAX_TOOL_ROUNDS 轮）
+     *   最终（流式）→ 用完整的消息列表（含工具执行结果）调用 streamingModel.generate() 获取最终文本
+     */
+    private fun chatWithCompanyExpert(
+        sessionId: String,
+        streamingModel: OpenAiStreamingChatModel,
+        systemPrompt: String,
+        userMessage: String,
+        onDelta: (String) -> Unit,
+    ) {
+        val nonStreamingModel = buildNonStreamingModel()
+
+        // 中国企业专家 Agent 专用 system prompt（附加在企业基础 prompt 之后）
+        val fullSystemPrompt = buildCompanyExpertSystemPrompt(systemPrompt)
+
+        // 从 MySQL 加载历史消息
+        val historyRecords = chatHistoryRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
+        val messages = mutableListOf<ChatMessage>()
+        messages.add(SystemMessage.from(fullSystemPrompt))
+        for (record in historyRecords) {
+            when (record.role) {
+                "user" -> messages.add(UserMessage.from(record.content))
+                "assistant" -> messages.add(AiMessage.from(record.content))
+            }
+        }
+
+        // 中国企业专家 Agent 的工具规格集合
+        val toolSpecs = buildCompanyExpertToolSpecs()
+
+        // ---- 工具决策循环（最多 maxToolRounds() 轮）----
+        var toolRounds = 0
+        while (toolRounds < maxToolRounds()) {
+            toolRounds++
+            log.info("[CompanyExpert] 工具决策第 $toolRounds 轮（非流式）")
+
+            val roundResponse: Response<AiMessage> = try {
+                nonStreamingModel.generate(messages, toolSpecs)
+            } catch (e: Exception) {
+                log.warn("[CompanyExpert] 非流式模型调用失败，降级到纯流式模式: {}", e.message)
+                chatSimple(sessionId, streamingModel, fullSystemPrompt, onDelta)
+                return
+            }
+
+            val aiMessage = roundResponse.content()
+            if (!aiMessage.hasToolExecutionRequests()) {
+                break
+            }
+
+            // 将 AI 的工具调用消息加入消息列表
+            messages.add(aiMessage)
+
+            // 逐个执行工具
+            val toolRequests = aiMessage.toolExecutionRequests()
+            log.info(
+                "[CompanyExpert] AI 决定调用 {} 个工具: {}",
+                toolRequests.size,
+                toolRequests.joinToString(", ") { it.name() },
+            )
+            for (request in toolRequests) {
+                val result = executeCompanyExpertTool(request)
+                messages.add(ToolExecutionResultMessage.from(request, result))
+            }
+
+            if (toolRounds >= maxToolRounds()) {
+                log.warn("[CompanyExpert] 达到最大工具轮数 ${maxToolRounds()}，结束工具决策")
+            }
+        }
+
+        // ---- 最后：流式调用，获取 AI 最终文本回复 ----
+        log.info("[CompanyExpert] 工具决策完成，流式生成最终回复")
+        streamingChatGenerate(streamingModel, messages, sessionId, onDelta)
+    }
+
+    /**
+     * 中国企业专家 Agent 的 System Prompt。
+     * 引导 AI 按需调用工具，并说明各工具的使用场景。
+     */
+    private fun buildCompanyExpertSystemPrompt(basePrompt: String): String {
+        val sb = StringBuilder()
+        sb.appendLine(basePrompt)
+        sb.appendLine()
+        sb.appendLine("【中国企业专家 Agent 工具使用指南】")
+        sb.appendLine("你是一名专业的中国企业财报分析师，拥有以下工具，请按需选用：")
+        sb.appendLine("1. queryCompany / queryCompanyDetail：查询中国企业基础信息与财报列表（股票代码或公司名）。")
+        sb.appendLine("2. queryIncomeStatement / queryBalanceSheet / queryCashFlow / queryFinancialIndicators：查询财务报表明细与财务指标（需先通过 queryCompany 或 queryCompanyDetail 获取 reportId）。")
+        sb.appendLine("3. queryIndicatorHistory：查询某财务指标的历史走势（同比、多期）。")
+        sb.appendLine("4. queryPeerCompare：同行业公司某指标横向对比。")
+        sb.appendLine("5. searchFinanceNews / searchGeneralNews / getFinanceNewsDetail：检索项目新闻库中的相关新闻报道。")
+        sb.appendLine("6. webSearch：联网搜索获取最新实时信息（新闻、市场行情）。")
+        sb.appendLine("7. tushareQuery：查询 Tushare 外部财经数据（股票历史行情、个股财务数据、行业数据等）。")
+        sb.appendLine("8. sinaQuote：查询新浪财经实时行情（当前价格、涨跌、成交量）。")
+        sb.appendLine("9. akshareQuery：通过 AkShare 查询股票财经数据（个股信息、实时行情、历史行情、个股新闻）。")
+        sb.appendLine()
+        sb.appendLine("工作流程建议：先识别公司 → 查询财报/指标 → 结合新闻与实时行情 → 综合分析回答。")
+        sb.appendLine("当用户询问财务指标历史走势或同比变化时，请优先使用 queryIndicatorHistory。")
+        sb.appendLine("当用户询问与某家公司相关的新闻时，先 searchNews 检索新闻库，再视情况调用 webSearch 获取最新外部信息。")
+        sb.appendLine("当用户需要实时行情或最新股价时，请用 sinaQuote 或 tushareQuery。")
+        sb.appendLine("回答请使用中文，语言专业易懂，直接给用户分析结论，不要输出工具调用的原始 JSON。")
+        return sb.toString()
+    }
+
+    /**
+     * 中国企业专家 Agent 的工具规格集合（供非流式模型工具决策）。
+     * 工具名与 CompanyFinanceTool / NewsSearchTool / TushareFinanceTool 等 @Tool 方法名保持一致。
+     */
+    private fun buildCompanyExpertToolSpecs(): List<ToolSpecification> {
+        val specs = mutableListOf<ToolSpecification>()
+        specs.add(webSearchToolSpec())
+        // 企业财报工具
+        specs.add(simpleToolSpec("queryCompany", "查询中国上市公司基础信息与财报列表。参数 keyword 为股票代码或公司名称（如 600519 或 贵州茅台）。", "keyword"))
+        specs.add(simpleToolSpec("queryCompanyDetail", "查询中国上市公司详情与财报行数概览。参数 companyId 为公司 id。", "companyId"))
+        specs.add(simpleToolSpec("queryIncomeStatement", "查询利润表明细。参数 reportId 为财报 id。", "reportId"))
+        specs.add(simpleToolSpec("queryBalanceSheet", "查询资产负债表明细。参数 reportId 为财报 id。", "reportId"))
+        specs.add(simpleToolSpec("queryCashFlow", "查询现金流量表明细。参数 reportId 为财报 id。", "reportId"))
+        specs.add(simpleToolSpec("queryFinancialIndicators", "查询财务指标（ROE、毛利率等）。参数 reportId 为财报 id。", "reportId"))
+        specs.add(simpleToolSpec("queryIndicatorHistory", "查询财务指标历史走势。参数 companyId / indicatorCode。", "companyId indicatorCode"))
+        specs.add(simpleToolSpec("queryPeerCompare", "同行业指标横向对比。参数 indicatorCode、industry、fiscalYear、fiscalPeriod。", "indicatorCode industry fiscalYear fiscalPeriod"))
+        // 新闻库工具
+        specs.add(simpleToolSpec("searchFinanceNews", "检索新闻库财经快讯。参数 keyword、start、end（日期 yyyy-MM-dd）。", "keyword"))
+        specs.add(simpleToolSpec("searchGeneralNews", "检索新闻库通用新闻（网易）。参数 keyword、start、end。", "keyword"))
+        specs.add(simpleToolSpec("getFinanceNewsDetail", "获取财经快讯全文。参数 id 为快讯 id。", "id"))
+        // 外部数据工具
+        specs.add(simpleToolSpec("tushareQuery", "查询 Tushare 外部财经数据。参数 apiName 为接口名，params 为 JSON 参数。", "apiName params"))
+        specs.add(simpleToolSpec("sinaQuote", "查询新浪财经实时行情。参数 symbol 为股票代码（带交易所前缀，逗号分隔）。", "symbol"))
+        specs.add(simpleToolSpec("akshareQuery", "通过 AkShare 查询股票财经数据。参数 symbol 股票代码、mode（info/spot/hist/news/industry）。", "symbol mode"))
+        return specs
+    }
+
+    /** 构建 ToolSpecification（参数均为可选字符串，避免模型因缺参失败） */
+    private fun simpleToolSpec(name: String, description: String, params: String): ToolSpecification {
+        val schema = JsonObjectSchema.builder()
+        for (p in params.split(" ").filter { it.isNotEmpty() }) {
+            schema.addStringProperty(p, p)
+        }
+        return ToolSpecification.builder()
+            .name(name)
+            .description(description)
+            .parameters(schema.build())
+            .build()
+    }
+
+    /** 中国企业专家 Agent 的最大工具决策轮数 */
+    private fun maxToolRounds(): Int = 5
+
+    /** Tavily 联网搜索工具规格（企业专家 Agent 也包含此工具） */
+    private fun webSearchToolSpec(): ToolSpecification =
+        ToolSpecification.builder()
+            .name("webSearch")
+            .description("""搜索互联网获取最新信息。当你需要查找实时新闻、最新数据、市场行情、突发事件等无法从已有知识中获取的信息时，请调用此工具。""")
+            .parameters(JsonObjectSchema.builder()
+                .addStringProperty("query", "精炼的搜索关键词，例如：'2026-05-29 A股 板块资金净流入 排名'")
+                .required("query")
+                .build())
+            .build()
+
+    /** 执行中国企业专家 Agent 的工具调用（兼容多轮决策） */
+    private fun executeCompanyExpertTool(request: ToolExecutionRequest): String {
+        val rawArgs = request.arguments() ?: "{}"
+        val args = try {
+            objectMapper.readValue<Map<String, Any?>>(rawArgs)
+        } catch (_: Exception) {
+            mapOf<String, Any?>("query" to rawArgs, "symbol" to rawArgs)
+        }
+
+        fun str(key: String): String? = args[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        fun num(key: String): Long? = args[key]?.toString()?.toLongOrNull()
+
+        log.info("[CompanyExpert] 执行工具: name='{}', args='{}'", request.name(), rawArgs)
+        val startedAt = System.currentTimeMillis()
+
+        val result = when (request.name()) {
+            "queryCompany" -> companyFinanceTool.queryCompany(str("keyword") ?: str("query") ?: "总公司")
+            "queryCompanyDetail" -> companyFinanceTool.queryCompanyDetail(num("companyId") ?: -1L)
+            "queryIncomeStatement" -> companyFinanceTool.queryIncomeStatement(num("reportId") ?: -1L)
+            "queryBalanceSheet" -> companyFinanceTool.queryBalanceSheet(num("reportId") ?: -1L)
+            "queryCashFlow" -> companyFinanceTool.queryCashFlow(num("reportId") ?: -1L)
+            "queryFinancialIndicators" -> companyFinanceTool.queryFinancialIndicators(num("reportId") ?: -1L)
+            "queryIndicatorHistory" -> companyFinanceTool.queryIndicatorHistory(num("companyId") ?: -1L, str("indicatorCode") ?: "")
+            "queryPeerCompare" -> companyFinanceTool.queryPeerCompare(
+                str("indicatorCode") ?: "",
+                str("industry"),
+                (args["fiscalYear"]?.toString()?.toIntOrNull()) ?: 0,
+                str("fiscalPeriod") ?: "年报",
+            )
+            "searchFinanceNews" -> newsSearchTool.searchFinanceNews(str("keyword") ?: str("query") ?: "", str("start"), str("end"))
+            "searchGeneralNews" -> newsSearchTool.searchGeneralNews(str("keyword") ?: str("query") ?: "", str("start"), str("end"))
+            "getFinanceNewsDetail" -> newsSearchTool.getFinanceNewsDetail(num("id") ?: -1L)
+            "webSearch" -> tavilySearchTool.webSearch(str("query") ?: "")
+            "tushareQuery" -> tushareFinanceTool.tushareQuery(str("apiName") ?: "", str("params") ?: "{}")
+            "sinaQuote" -> sinaFinanceTool.sinaQuote(str("symbol") ?: "")
+            "akshareQuery" -> akshareTool.akshareQuery(str("symbol") ?: "", str("mode") ?: "info", str("start"), str("end"))
+            else -> {
+                log.warn("[CompanyExpert] 未知工具: name='{}'", request.name())
+                "未知工具"
+            }
+        }
+
+        // ★ 打印工具的完整返回内容：这是 AI 最终回答所依据的原始资料
+        //   （财报库 / 新闻库 / Tavily 联网 / Tushare / 新浪行情 / AkShare Python 脚本）
+        log.info(
+            "[CompanyExpert] 工具返回: name='{}', 耗时={}ms, 长度={} 字符\n--- 工具输出开始 ---\n{}\n--- 工具输出结束 ---",
+            request.name(),
+            System.currentTimeMillis() - startedAt,
+            result.length,
+            truncateForLog(result),
+        )
+        return result
+    }
+
+    /** 日志用：超长文本截断，避免日志被刷爆（默认最多 3000 字符） */
+    private fun truncateForLog(text: String, max: Int = 3000): String =
+        if (text.length <= max) text else text.take(max) + "\n...(共 ${text.length} 字符，已截断)"
 
     /**
      * 手动实现的工具调用循环。
@@ -485,7 +736,13 @@ class ChatMemoryService(
             val results: List<RagSearchResult> = ragFeignClient.search(request)
             log.info("[RAG] RAG 服务返回 {} 条结果", results.size)
 
-            if (results.isEmpty()) return ""
+            if (results.isEmpty()) {
+                log.warn(
+                    "[RAG] 未检索到与提问相关的新闻（向量库 news_vectors 无匹配）→ 本次不注入新闻上下文，" +
+                        "将由 Agent 工具自主检索（新闻库 searchFinanceNews/searchGeneralNews、Tavily webSearch、Tushare、AkShare 等）",
+                )
+                return ""
+            }
 
             val sb = StringBuilder()
             var count = 0

@@ -24,7 +24,7 @@ class ScriptController(
         if (key.isNullOrEmpty()) {
             return ScriptRunResponse(ok = false, key = "", message = "缺少 key")
         }
-        return scriptRunnerService.run(key, req.code)
+        return scriptRunnerService.run(key, req.code, req.symbol)
     }
 
     @PostMapping("/run-stream", "/run/stream")
@@ -47,6 +47,7 @@ class ScriptController(
                 scriptRunnerService.runStream(
                     key = key,
                     code = req.code,
+                    symbol = req.symbol,
                     onMeta = { line ->
                         emitter.send(SseEmitter.event().name("meta").data(line))
                     },
