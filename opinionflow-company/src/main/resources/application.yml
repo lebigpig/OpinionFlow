@@ -10,10 +10,17 @@ spring:
         server-addr: 127.0.0.1:8848
         namespace: public
   datasource:
+    # 数据源 1（主，@Primary）：中国企业财报库 company_china
     url: jdbc:mysql://127.0.0.1:3306/company_china?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
+    # 数据源 2：美国企业财报库 company_us（美股，见 config/UsDataSourceConfig.kt）
+    us:
+      url: jdbc:mysql://127.0.0.1:3306/company_us?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      username: root
+      password: 123456
+      driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
       ddl-auto: none

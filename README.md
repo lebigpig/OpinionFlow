@@ -360,6 +360,25 @@ opinionflow:
 |------|------|------|
 | POST | `/api/ai/parse` | AI 分析（非流式） |
 | POST | `/api/ai/parse/stream` | AI 分析（SSE 流式） |
+| POST | `/api/ai/world-map-agent` | 世界格局地图 Agent（自然语言 → 结构化 JSON） |
+| GET | `/api/ai/settings` | AI 配置概况：生效配置、服务端默认 token（脱敏）、厂商预置清单 |
+| GET | `/api/ai/models` | 当前 token 下**可调用的模型清单**（真实调用 `{baseUrl}/models`，失败回退预置清单） |
+
+#### 前端「AI 设置」的配置覆盖（优先级：请求头 > 服务端默认）
+
+前端顶栏 `⚙️ AI 设置` 弹窗填写的 api-token / 接口地址 / 模型，通过请求头传给后端，**优先级高于 `key.properties`**：
+
+| 请求头 | 说明 |
+|--------|------|
+| `X-AI-Provider` | 厂商标识（deepseek / openai / siliconflow / dashscope / moonshot / zhipu / openrouter / custom） |
+| `X-AI-Base-Url` | OpenAI 兼容接口地址（`https://api.deepseek.com`、`.../v1`、`.../v1/chat/completions` 均可，自动归一化） |
+| `X-AI-Api-Key` | 用户自己的 api-token（覆盖服务端默认 token；仅本次请求有效，不落库不记日志） |
+| `X-AI-Model` | 使用的模型名（覆盖服务端默认 model） |
+
+- 四个 AI 接口（`/api/ai/parse`、`/api/ai/parse/stream`、`/api/ai/world-map-agent`、`/api/chat-memory/chat`）均支持；
+- **不带任何头时行为与之前完全一致**（走 `opinionflow.ai.api-url / api-key / model`）；
+- 请求级配置用 `AiRuntimeConfigManager`（ThreadLocal）隔离，请求结束在 `finally` 中清理，避免并发请求串用 token；
+- v1 仅支持 OpenAI 兼容协议，Claude / Gemini 原生协议适配留待后续版本（见 `AiProviderPresets`）。
 
 ### 对话记忆接口（opinionflow-ai → `/api/chat-memory/`）
 
@@ -485,9 +504,49 @@ AI 服务通过 Feign 调用其他服务（新增 Feign 客户端均放在 `opin
 
 | Feign 客户端 | 目标服务 | 用途 |
 |-------------|---------|------|
-| `CompanyFeignClient` | opinionflow-company | 企业财报 |
+| `CompanyFeignClient` | opinionflow-company | 企业财报（company_china） |
+| `CompanyUsFeignClient` | opinionflow-company | 美股财报（company_us，path `/api/company/us`） |
 | `NewsFeignClient` | opinionflow-news | 新闻库检索 |
 | `SpiderScriptFeignClient` | opinionflow-spider | AkShare 脚本触发 |
+
+---
+
+## 🇺🇸 美国企业专家 Agent（美股 / company_us）
+
+AI 服务在「企业 → 美国企业」页面提供**美国企业专家 Agent**，功能与中国企业页面完全一致（列表 / 详情 / 三表 / 财务指标 / 走势图 / 同行业对比 / 🤖 Agent 面板），数据源换成美股库 `company_us`（US GAAP / SEC EDGAR）：
+
+| 项目 | 中国企业 | 美国企业 |
+|------|---------|---------|
+| 前端路由 | `/company/china` | `/company/us` |
+| 页面组件 | `views/CompanyChina.vue` | `views/CompanyUS.vue` |
+| 行业下拉 Store | `stores/CompanyStore.js` | `stores/CompanyUSStore.js` |
+| Agent Store | `stores/CompanyAgentStore.js` | `stores/CompanyUSAgentStore.js` |
+| REST 前缀 | `/api/company` | `/api/company/us` |
+| 数据库 | `company_china` | `company_us` |
+| Agent 模式 | `company-expert` | `company-us-expert` |
+| 会话前缀 | `company_china_<代码>` | `company_us_<代码>` |
+
+### 后端：单服务双数据源
+
+`opinionflow-company`（端口 9206）在同一服务内配置两个数据源；网关既有规则 `Path=/api/company/**` 已覆盖 `/api/company/us/**`，**无需新增网关路由**：
+
+| 数据源 | 配置项 | 实体 / 仓库包 | 事务管理器 |
+|--------|--------|--------------|-----------|
+| `company_china`（@Primary） | `spring.datasource` | `company.domain` / `company.repo` | `transactionManager` |
+| `company_us` | `spring.datasource.us` | `company.us.domain` / `company.us.repo` | `usTransactionManager` |
+
+- 配置类：`company/config/ChinaDataSourceConfig.kt`、`company/config/UsDataSourceConfig.kt`
+- `CompanyApplication` 排除 `DataSourceAutoConfiguration` / `HibernateJpaAutoConfiguration` / `JpaRepositoriesAutoConfiguration`（两套 DataSource / EMF / 仓库全部手动装配，见类注释）
+- REST 控制器：`company/us/controller/CompanyUsController.kt`（14 个接口，与中国库 `CompanyController` 一一对应）
+- 建表脚本：`sql/V9__create_company_us.sql`
+
+**字段映射（保证前端与中国页面共用同一套渲染）**：美股库 `company.ticker` → 接口 `companyCode`；美股库无 `note_ref`，接口固定返回 `noteRef: null`；并额外返回 `sector / cik / isin / country / currency / formType / accessionNo / filingUrl / scaleFactor / itemCode / itemNameEn / indicatorNameEn` 等美股专有字段。
+
+### AI 侧
+
+- `opinionflow-api` → `CompanyUsFeignClient`（`@FeignClient(name = "opinionflow-company", contextId = "companyUsFeignClient", path = "/api/company/us")`）
+- `opinionflow-ai` → `CompanyUsFinanceTool`（8 个美股财报工具，措辞与口径为美股）
+- `ChatMemoryService` 抽出通用执行流程 `chatWithExpertTools(tag, …)`，`company-expert` 与 `company-us-expert` 两种模式共用「工具决策（非流式，最多 5 轮）+ 最终流式回复」逻辑
 
 ---
 

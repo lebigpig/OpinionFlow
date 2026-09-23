@@ -6,6 +6,7 @@ import com.lespider.opinionflow.ai.dto.ChatMemoryRequest
 import com.lespider.opinionflow.ai.dto.ChatMemoryHistoryResponse
 import com.lespider.opinionflow.ai.dto.ChatMemoryMessageDto
 import com.lespider.opinionflow.ai.dto.NewSessionResponse
+import com.lespider.opinionflow.ai.dto.AiRequestHeaders
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
@@ -48,9 +50,19 @@ class ChatMemoryController(
      * 后端以 SSE 格式流式返回 AI 回复（event: delta / event: done / event: error）。
      *
      * 对话内容会永久存储到 MySQL，Redis 缓存 20 分钟。
+     *
+     * 可携带「AI 设置」请求头（见 [AiRequestHeaders]）覆盖服务端默认 token / baseUrl / model，
+     * 未携带时行为与之前完全一致。
      */
     @PostMapping("/chat")
-    fun chat(@RequestBody body: ChatMemoryRequest, response: HttpServletResponse) {
+    fun chat(
+        @RequestBody body: ChatMemoryRequest,
+        response: HttpServletResponse,
+        @RequestHeader(value = AiRequestHeaders.PROVIDER, required = false) provider: String?,
+        @RequestHeader(value = AiRequestHeaders.BASE_URL, required = false) baseUrl: String?,
+        @RequestHeader(value = AiRequestHeaders.API_KEY, required = false) apiKey: String?,
+        @RequestHeader(value = AiRequestHeaders.MODEL, required = false) model: String?,
+    ) {
         val sessionId = body.sessionId?.trim().takeUnless { it.isNullOrEmpty() } ?: "default"
         val content = body.content?.trim().orEmpty()
         if (content.isEmpty()) {
@@ -73,6 +85,12 @@ class ChatMemoryController(
                 webSearch = body.webSearch,
                 agentMode = body.agentMode,
                 externalApiKeys = body.externalApiKeys,
+                aiConfig = AiRequestHeaders.toConfig(provider, baseUrl, apiKey, model),
+                onReset = {
+                    // 后端发现流式内容无效并已重新生成答案，让前端清空空气泡再接收真实内容
+                    response.writer.write("event:reset\ndata:{}\n\n")
+                    response.writer.flush()
+                },
             ) { delta ->
                 val escaped = delta
                     .replace("\\", "\\\\")

@@ -3,6 +3,7 @@ package com.lespider.opinionflow.ai.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lespider.opinionflow.ai.domain.ChatHistory
+import com.lespider.opinionflow.ai.dto.AiRuntimeConfig
 import com.lespider.opinionflow.ai.repo.ChatHistoryRepository
 import com.lespider.opinionflow.api.rag.RagSearchRequest
 import com.lespider.opinionflow.api.rag.RagSearchResult
@@ -50,11 +51,13 @@ class ChatMemoryService(
     private val ragFeignClient: RagFeignClient,
     private val tavilySearchTool: TavilySearchTool,
     private val companyFinanceTool: CompanyFinanceTool,
+    private val companyUsFinanceTool: CompanyUsFinanceTool,
     private val newsSearchTool: NewsSearchTool,
     private val tushareFinanceTool: TushareFinanceTool,
     private val sinaFinanceTool: SinaFinanceTool,
     private val akshareTool: AkShareTool,
     private val companyAgentKeyManager: CompanyAgentKeyManager,
+    private val aiRuntimeConfigManager: AiRuntimeConfigManager,
     @Value("\${opinionflow.ai.api-url:}") private val apiUrl: String,
     @Value("\${opinionflow.ai.api-key:}") private val apiKey: String,
     @Value("\${opinionflow.ai.model:gpt-4o-mini}") private val model: String,
@@ -70,6 +73,20 @@ class ChatMemoryService(
         private const val REDIS_PREFIX = "chat:history:"
         private val REDIS_TTL = Duration.ofMinutes(20)
         private const val MAX_MESSAGES = 40
+    }
+
+    /**
+     * 流式回复校验判定。用于区分「真空白」与「工具通道问题」，
+     * 避免把模型在流式阶段发出的工具调用误判为空白而静默兜底。
+     *
+     * - VALID          ：剥离工具标记后仍有有效正文 → 直接使用。
+     * - TOOL_CALLS     ：无有效正文，但本轮携带了工具调用（结构化或协议文本）。
+     *                    这是工具通道问题，应执行工具并重生成，而不是当空白兜底。
+     * - BLANK_NO_TOOLS ：真空白，且本轮没有任何工具调用意图。
+     *                    可以安全走「流式空转非流式」兜底。
+     */
+    private enum class ReplyVerdict {
+        VALID, TOOL_CALLS, BLANK_NO_TOOLS,
     }
 
     // ─── 数据类 ────────────────────────────────────────────────
@@ -154,7 +171,12 @@ class ChatMemoryService(
      * @param agentMode Agent 模式：
      *                   - null/"general"/"": 传统模式（webSearch=true 时绑定 Tavily 联网搜索）
      *                   - "company-expert": 中国企业专家 Agent（绑定企业财报 + 新闻库 + Tavily + Tushare + 新浪财经 + AkShare 工具）
+     *                   - "company-us-expert": 美国企业专家 Agent（绑定美股财报 company_us + 新闻库 + Tavily + Tushare + 新浪财经 + AkShare 工具）
      * @param externalApiKeys 外部 API Keys（如 Tushare token），仅本次请求有效，未传入时回退配置文件
+     * @param aiConfig 请求级 AI 配置（前端「AI 设置」的 api-token / baseUrl / model），
+     *                 优先级高于 key.properties / application.yml 中的默认配置；未传入时完全走服务端默认
+     * @param onReset 当已流出的流式内容被判定无效（空白 / 模型把工具调用当文本输出）并重新生成答案时回调，
+     *                控制器据此向浏览器推送 event:reset，前端清空空气泡后重新接收内容
      */
     fun chatWithMemory(
         sessionId: String,
@@ -163,6 +185,8 @@ class ChatMemoryService(
         webSearch: Boolean = false,
         agentMode: String? = null,
         externalApiKeys: Map<String, String>? = null,
+        aiConfig: AiRuntimeConfig? = null,
+        onReset: (() -> Unit)? = null,
         onDelta: (String) -> Unit,
     ) {
         val trimmed = userMessage.trim()
@@ -179,39 +203,45 @@ class ChatMemoryService(
         // 2) 构建 system prompt（含 4a 选中新闻 + 4b RAG 检索）
         val sysText = buildSystemPrompt(trimmed, selectedContent)
 
-        // 3) 构建 LangChain4j 流式模型
-        val streamingModel = buildStreamingModel()
-
-        // 4) 确定 Agent 模式（agentMode 优先，其次兼容 webSearch）
-        val mode = agentMode?.trim().orEmpty().lowercase().takeIf { it.isNotEmpty() } ?: "general"
-
-        // 5) 注入外部 API Keys（中国企业专家 Agent 工具使用）
-        //    请求级作用域：工具决策/工具执行/SSE 输出都在本请求线程内完成，
+        // 3) 注入请求级配置（前端「AI 设置」的 AI 配置 + 企业专家 Agent 的外部 keys）
+        //    请求级作用域：模型构建/工具决策/工具执行/SSE 输出都在本请求线程内完成，
         //    结束后在 finally 中清理，避免并发请求互相串用 token 或残留 token 被后续请求复用。
+        aiRuntimeConfigManager.inject(aiConfig)
         companyAgentKeyManager.inject(externalApiKeys)
         tushareFinanceTool.setRuntimeToken(
             externalApiKeys?.get("tushareToken") ?: externalApiKeys?.get("tushare_token"),
         )
 
+        // 4) 构建 LangChain4j 流式模型（内部读取上面的请求级配置，未配置则回退服务端默认）
+        val streamingModel = buildStreamingModel()
+
+        // 5) 确定 Agent 模式（agentMode 优先，其次兼容 webSearch）
+        val mode = agentMode?.trim().orEmpty().lowercase().takeIf { it.isNotEmpty() } ?: "general"
+
         try {
             if (mode == "company-expert") {
                 // ★★★ 中国企业专家 Agent：AI 可自主调用企业财报/新闻库/Tavily/Tushare/新浪/AkShare 工具 ★★★
                 log.info("[Agent] agentMode=company-expert → 中国企业专家 Agent")
-                chatWithCompanyExpert(sessionId, streamingModel, sysText, trimmed, onDelta)
+                chatWithCompanyExpert(sessionId, streamingModel, sysText, trimmed, onReset, onDelta)
+            } else if (mode == "company-us-expert") {
+                // ★★★ 美国企业专家 Agent：AI 可自主调用美股财报（company_us）/新闻库/Tavily/Tushare/新浪/AkShare 工具 ★★★
+                log.info("[Agent] agentMode=company-us-expert → 美国企业专家 Agent")
+                chatWithCompanyUsExpert(sessionId, streamingModel, sysText, trimmed, onReset, onDelta)
             } else if (webSearch && tavilyEnabled) {
                 // ★★★ 通用 Agent 模式：AI 可自主调用 Tavily 联网搜索 ★★★
                 log.info("[Agent] webSearch=true, tavilyEnabled=true → AI 可自主调用联网搜索")
-                chatWithAgent(sessionId, streamingModel, sysText, trimmed, onDelta)
+                chatWithAgent(sessionId, streamingModel, sysText, trimmed, onReset, onDelta)
             } else {
                 // ★ 传统模式：直接流式调用（含 RAG，原有逻辑保留）
                 log.info("[Agent] webSearch={}, tavilyEnabled={} → 传统对话模式", webSearch, tavilyEnabled)
-                chatSimple(sessionId, streamingModel, sysText, onDelta)
+                chatSimple(sessionId, streamingModel, sysText, onReset, onDelta)
             }
 
             // 8) 更新 Redis 缓存
             invalidateCache(sessionId)
         } finally {
-            // 请求结束：清理请求级密钥，防止跨请求泄漏 / 串用
+            // 请求结束：清理请求级配置与密钥，防止跨请求泄漏 / 串用
+            aiRuntimeConfigManager.clear()
             companyAgentKeyManager.clear()
             tushareFinanceTool.clearRuntimeToken()
         }
@@ -226,22 +256,71 @@ class ChatMemoryService(
      *   工具决策（非流式）→ AI 决定是否调用工具（支持多轮，最多 MAX_TOOL_ROUNDS 轮）
      *   最终（流式）→ 用完整的消息列表（含工具执行结果）调用 streamingModel.generate() 获取最终文本
      */
+    /** 中国企业专家 Agent：使用中国库（company_china）工具集与企业分析师 prompt */
     private fun chatWithCompanyExpert(
         sessionId: String,
         streamingModel: OpenAiStreamingChatModel,
         systemPrompt: String,
         userMessage: String,
+        onReset: (() -> Unit)? = null,
         onDelta: (String) -> Unit,
     ) {
-        val nonStreamingModel = buildNonStreamingModel()
+        chatWithExpertTools(
+            tag = "CompanyExpert",
+            sessionId = sessionId,
+            streamingModel = streamingModel,
+            // 中国企业专家 Agent 专用 system prompt（附加在企业基础 prompt 之后）
+            systemPrompt = buildCompanyExpertSystemPrompt(systemPrompt),
+            onReset = onReset,
+            onDelta = onDelta,
+            toolSpecs = buildCompanyExpertToolSpecs(),
+            executeTool = { executeCompanyExpertTool(it) },
+        )
+    }
 
-        // 中国企业专家 Agent 专用 system prompt（附加在企业基础 prompt 之后）
-        val fullSystemPrompt = buildCompanyExpertSystemPrompt(systemPrompt)
+    /** 美国企业专家 Agent：使用美股库（company_us）工具集与美股分析师 prompt */
+    private fun chatWithCompanyUsExpert(
+        sessionId: String,
+        streamingModel: OpenAiStreamingChatModel,
+        systemPrompt: String,
+        userMessage: String,
+        onReset: (() -> Unit)? = null,
+        onDelta: (String) -> Unit,
+    ) {
+        chatWithExpertTools(
+            tag = "CompanyUsExpert",
+            sessionId = sessionId,
+            streamingModel = streamingModel,
+            // 美国企业专家 Agent 专用 system prompt（附加在企业基础 prompt 之后）
+            systemPrompt = buildCompanyUsExpertSystemPrompt(systemPrompt),
+            onReset = onReset,
+            onDelta = onDelta,
+            toolSpecs = buildCompanyUsExpertToolSpecs(),
+            executeTool = { executeCompanyUsExpertTool(it) },
+        )
+    }
+
+    /**
+     * 企业专家 Agent 通用执行流程（中国企业 / 美国企业共用）：
+     *   工具决策（非流式）→ AI 决定是否调用工具（支持多轮，最多 maxToolRounds() 轮）
+     *   最终（流式）→ 用完整的消息列表（含工具执行结果）调用 streamingModel
+     */
+    private fun chatWithExpertTools(
+        tag: String,
+        sessionId: String,
+        streamingModel: OpenAiStreamingChatModel,
+        systemPrompt: String,
+        onReset: (() -> Unit)? = null,
+        onDelta: (String) -> Unit,
+        toolSpecs: List<ToolSpecification>,
+        executeTool: (ToolExecutionRequest) -> String,
+    ) {
+        val nonStreamingModel = buildNonStreamingModel()
 
         // 从 MySQL 加载历史消息
         val historyRecords = chatHistoryRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
         val messages = mutableListOf<ChatMessage>()
-        messages.add(SystemMessage.from(fullSystemPrompt))
+        messages.add(SystemMessage.from(systemPrompt))
         for (record in historyRecords) {
             when (record.role) {
                 "user" -> messages.add(UserMessage.from(record.content))
@@ -249,20 +328,17 @@ class ChatMemoryService(
             }
         }
 
-        // 中国企业专家 Agent 的工具规格集合
-        val toolSpecs = buildCompanyExpertToolSpecs()
-
         // ---- 工具决策循环（最多 maxToolRounds() 轮）----
         var toolRounds = 0
         while (toolRounds < maxToolRounds()) {
             toolRounds++
-            log.info("[CompanyExpert] 工具决策第 $toolRounds 轮（非流式）")
+            log.info("[$tag] 工具决策第 $toolRounds 轮（非流式）")
 
             val roundResponse: Response<AiMessage> = try {
                 nonStreamingModel.generate(messages, toolSpecs)
             } catch (e: Exception) {
-                log.warn("[CompanyExpert] 非流式模型调用失败，降级到纯流式模式: {}", e.message)
-                chatSimple(sessionId, streamingModel, fullSystemPrompt, onDelta)
+                log.warn("[$tag] 非流式模型调用失败，降级到纯流式模式: {}", e.message)
+                chatSimple(sessionId, streamingModel, systemPrompt, onReset, onDelta)
                 return
             }
 
@@ -277,23 +353,31 @@ class ChatMemoryService(
             // 逐个执行工具
             val toolRequests = aiMessage.toolExecutionRequests()
             log.info(
-                "[CompanyExpert] AI 决定调用 {} 个工具: {}",
+                "[$tag] AI 决定调用 {} 个工具: {}",
                 toolRequests.size,
                 toolRequests.joinToString(", ") { it.name() },
             )
             for (request in toolRequests) {
-                val result = executeCompanyExpertTool(request)
+                val result = executeTool(request)
                 messages.add(ToolExecutionResultMessage.from(request, result))
             }
 
             if (toolRounds >= maxToolRounds()) {
-                log.warn("[CompanyExpert] 达到最大工具轮数 ${maxToolRounds()}，结束工具决策")
+                log.warn("[$tag] 达到最大工具轮数 ${maxToolRounds()}，结束工具决策")
             }
         }
 
         // ---- 最后：流式调用，获取 AI 最终文本回复 ----
-        log.info("[CompanyExpert] 工具决策完成，流式生成最终回复")
-        streamingChatGenerate(streamingModel, messages, sessionId, onDelta)
+        log.info("[$tag] 工具决策完成，流式生成最终回复")
+        streamingChatGenerate(
+            streamingModel = streamingModel,
+            messages = messages,
+            sessionId = sessionId,
+            onReset = onReset,
+            onDelta = onDelta,
+            toolSpecs = toolSpecs,
+            executeTool = executeTool,
+        )
     }
 
     /**
@@ -432,6 +516,114 @@ class ChatMemoryService(
         return result
     }
 
+    /**
+     * 美国企业专家 Agent 的 System Prompt。
+     * 引导 AI 按需调用工具，并说明各工具的使用场景（口径为美股 / US GAAP / SEC）。
+     */
+    private fun buildCompanyUsExpertSystemPrompt(basePrompt: String): String {
+        val sb = StringBuilder()
+        sb.appendLine(basePrompt)
+        sb.appendLine()
+        sb.appendLine("【美国企业专家 Agent 工具使用指南】")
+        sb.appendLine("你是一名专业的美国上市公司（美股 / US GAAP / SEC EDGAR）财报分析师，拥有以下工具，请按需选用：")
+        sb.appendLine("1. queryCompany / queryCompanyDetail：查询美股公司基础信息与财报列表（股票代码如 AAPL，或公司名如 Apple）。")
+        sb.appendLine("2. queryIncomeStatement / queryBalanceSheet / queryCashFlow / queryFinancialIndicators：查询财务报表明细与财务指标（需先通过 queryCompany 或 queryCompanyDetail 获取 reportId）。")
+        sb.appendLine("3. queryIndicatorHistory：查询某财务指标的历史走势（同比、多期）。")
+        sb.appendLine("4. queryPeerCompare：同行业公司某指标横向对比。")
+        sb.appendLine("5. searchFinanceNews / searchGeneralNews / getFinanceNewsDetail：检索项目新闻库中的相关新闻报道。")
+        sb.appendLine("6. webSearch：联网搜索获取最新实时信息（新闻、市场行情）。")
+        sb.appendLine("7. tushareQuery：查询 Tushare 外部财经数据（国际行情、财务数据等）。")
+        sb.appendLine("8. sinaQuote：查询新浪财经实时行情（当前价格、涨跌、成交量）。")
+        sb.appendLine("9. akshareQuery：通过 AkShare 查询股票财经数据（个股信息、实时行情、历史行情、个股新闻）。")
+        sb.appendLine()
+        sb.appendLine("工作流程建议：先识别公司 → 查询美股财报/指标（注意美股财年与 10-K/10-Q 报告期）→ 结合新闻与实时行情 → 综合分析回答。")
+        sb.appendLine("当用户询问财务指标历史走势或同比变化时，请优先使用 queryIndicatorHistory。")
+        sb.appendLine("当用户询问与某家公司相关的新闻时，先检索新闻库，再视情况调用 webSearch 获取最新外部信息。")
+        sb.appendLine("当用户需要实时行情或最新股价时，请用 sinaQuote 或 tushareQuery。")
+        sb.appendLine("金额单位注意：美股财报常以千美元/百万美元列报，回答时请注明单位并统一换算后再比较。")
+        sb.appendLine("回答请使用中文，语言专业易懂，直接给用户分析结论，不要输出工具调用的原始 JSON。")
+        return sb.toString()
+    }
+
+    /**
+     * 美国企业专家 Agent 的工具规格集合（供非流式模型工具决策）。
+     * 工具名与 CompanyUsFinanceTool / NewsSearchTool 等 @Tool 方法名保持一致。
+     */
+    private fun buildCompanyUsExpertToolSpecs(): List<ToolSpecification> {
+        val specs = mutableListOf<ToolSpecification>()
+        specs.add(webSearchToolSpec())
+        // 美股财报工具
+        specs.add(simpleToolSpec("queryCompany", "查询美国上市公司基础信息与财报列表。参数 keyword 为股票代码或公司名称（如 AAPL 或 Apple）。", "keyword"))
+        specs.add(simpleToolSpec("queryCompanyDetail", "查询美国上市公司详情与财报行数概览。参数 companyId 为公司 id。", "companyId"))
+        specs.add(simpleToolSpec("queryIncomeStatement", "查询美股利润表明细。参数 reportId 为财报 id。", "reportId"))
+        specs.add(simpleToolSpec("queryBalanceSheet", "查询美股资产负债表明细。参数 reportId 为财报 id。", "reportId"))
+        specs.add(simpleToolSpec("queryCashFlow", "查询美股现金流量表明细。参数 reportId 为财报 id。", "reportId"))
+        specs.add(simpleToolSpec("queryFinancialIndicators", "查询美股财务指标（ROE、毛利率、EPS 等）。参数 reportId 为财报 id。", "reportId"))
+        specs.add(simpleToolSpec("queryIndicatorHistory", "查询美股财务指标历史走势。参数 companyId / indicatorCode。", "companyId indicatorCode"))
+        specs.add(simpleToolSpec("queryPeerCompare", "美股同行业指标横向对比。参数 indicatorCode、industry、fiscalYear、fiscalPeriod。", "indicatorCode industry fiscalYear fiscalPeriod"))
+        // 新闻库工具
+        specs.add(simpleToolSpec("searchFinanceNews", "检索新闻库财经快讯。参数 keyword、start、end（日期 yyyy-MM-dd）。", "keyword"))
+        specs.add(simpleToolSpec("searchGeneralNews", "检索新闻库通用新闻（网易）。参数 keyword、start、end。", "keyword"))
+        specs.add(simpleToolSpec("getFinanceNewsDetail", "获取财经快讯全文。参数 id 为快讯 id。", "id"))
+        // 外部数据工具
+        specs.add(simpleToolSpec("tushareQuery", "查询 Tushare 外部财经数据。参数 apiName 为接口名，params 为 JSON 参数。", "apiName params"))
+        specs.add(simpleToolSpec("sinaQuote", "查询新浪财经实时行情。参数 symbol 为股票代码（带交易所前缀，逗号分隔）。", "symbol"))
+        specs.add(simpleToolSpec("akshareQuery", "通过 AkShare 查询股票财经数据。参数 symbol 股票代码、mode（info/spot/hist/news/industry）。", "symbol mode"))
+        return specs
+    }
+
+    /** 执行美国企业专家 Agent 的工具调用（兼容多轮决策） */
+    private fun executeCompanyUsExpertTool(request: ToolExecutionRequest): String {
+        val rawArgs = request.arguments() ?: "{}"
+        val args = try {
+            objectMapper.readValue<Map<String, Any?>>(rawArgs)
+        } catch (_: Exception) {
+            mapOf<String, Any?>("query" to rawArgs, "symbol" to rawArgs)
+        }
+
+        fun str(key: String): String? = args[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        fun num(key: String): Long? = args[key]?.toString()?.toLongOrNull()
+
+        log.info("[CompanyUsExpert] 执行工具: name='{}', args='{}'", request.name(), rawArgs)
+        val startedAt = System.currentTimeMillis()
+
+        val result = when (request.name()) {
+            "queryCompany" -> companyUsFinanceTool.queryCompany(str("keyword") ?: str("query") ?: "Apple")
+            "queryCompanyDetail" -> companyUsFinanceTool.queryCompanyDetail(num("companyId") ?: -1L)
+            "queryIncomeStatement" -> companyUsFinanceTool.queryIncomeStatement(num("reportId") ?: -1L)
+            "queryBalanceSheet" -> companyUsFinanceTool.queryBalanceSheet(num("reportId") ?: -1L)
+            "queryCashFlow" -> companyUsFinanceTool.queryCashFlow(num("reportId") ?: -1L)
+            "queryFinancialIndicators" -> companyUsFinanceTool.queryFinancialIndicators(num("reportId") ?: -1L)
+            "queryIndicatorHistory" -> companyUsFinanceTool.queryIndicatorHistory(num("companyId") ?: -1L, str("indicatorCode") ?: "")
+            "queryPeerCompare" -> companyUsFinanceTool.queryPeerCompare(
+                str("indicatorCode") ?: "",
+                str("industry"),
+                (args["fiscalYear"]?.toString()?.toIntOrNull()) ?: 0,
+                str("fiscalPeriod") ?: "FY",
+            )
+            "searchFinanceNews" -> newsSearchTool.searchFinanceNews(str("keyword") ?: str("query") ?: "", str("start"), str("end"))
+            "searchGeneralNews" -> newsSearchTool.searchGeneralNews(str("keyword") ?: str("query") ?: "", str("start"), str("end"))
+            "getFinanceNewsDetail" -> newsSearchTool.getFinanceNewsDetail(num("id") ?: -1L)
+            "webSearch" -> tavilySearchTool.webSearch(str("query") ?: "")
+            "tushareQuery" -> tushareFinanceTool.tushareQuery(str("apiName") ?: "", str("params") ?: "{}")
+            "sinaQuote" -> sinaFinanceTool.sinaQuote(str("symbol") ?: "")
+            "akshareQuery" -> akshareTool.akshareQuery(str("symbol") ?: "", str("mode") ?: "info", str("start"), str("end"))
+            else -> {
+                log.warn("[CompanyUsExpert] 未知工具: name='{}'", request.name())
+                "未知工具"
+            }
+        }
+
+        log.info(
+            "[CompanyUsExpert] 工具返回: name='{}', 耗时={}ms, 长度={} 字符\n--- 工具输出开始 ---\n{}\n--- 工具输出结束 ---",
+            request.name(),
+            System.currentTimeMillis() - startedAt,
+            result.length,
+            truncateForLog(result),
+        )
+        return result
+    }
+
     /** 日志用：超长文本截断，避免日志被刷爆（默认最多 3000 字符） */
     private fun truncateForLog(text: String, max: Int = 3000): String =
         if (text.length <= max) text else text.take(max) + "\n...(共 ${text.length} 字符，已截断)"
@@ -452,6 +644,7 @@ class ChatMemoryService(
         streamingModel: OpenAiStreamingChatModel,
         systemPrompt: String,
         userMessage: String,
+        onReset: (() -> Unit)? = null,
         onDelta: (String) -> Unit,
     ) {
         // 构建非流式模型（用于第一轮工具决策）
@@ -487,7 +680,7 @@ class ChatMemoryService(
         } catch (e: Exception) {
             log.warn("[Agent] 非流式模型调用失败，降级到纯流式模式: {}", e.message)
             // 降级：直接进行流式调用（不包含工具规格）
-            chatSimple(sessionId, streamingModel, systemPrompt, onDelta)
+            chatSimple(sessionId, streamingModel, systemPrompt, onReset, onDelta)
             return
         }
 
@@ -502,49 +695,85 @@ class ChatMemoryService(
 
             // 2b) 逐个执行工具
             for (request in toolRequests) {
-                if (request.name() == "webSearch") {
-                    // 解析 arguments JSON，提取 query 字段（AI 用 function calling 传参时是 JSON 格式）
-                    val rawArgs = request.arguments()
-                    val query = try {
-                        val jsonNode = objectMapper.readTree(rawArgs)
-                        val extracted = jsonNode.get("query")?.asText() ?: rawArgs
-                        log.info("[Agent Tool] 从 arguments JSON 提取 query: '{}'", extracted)
-                        extracted
-                    } catch (_: Exception) {
-                        log.info("[Agent Tool] arguments 不是 JSON，直接使用: '{}'", rawArgs)
-                        rawArgs
-                    }
-                    log.info("[Agent Tool] AI 执行工具: name='{}', query='{}'", request.name(), query)
-                    val result = tavilySearchTool.webSearch(query)
-                    log.info("[Agent Tool] 搜索完成，返回 {} 字符", result.length)
-                    // 2c) 构造 ToolExecutionResultMessage 并加入消息列表
-                    messages.add(ToolExecutionResultMessage.from(request, result))
-                } else {
-                    log.warn("[Agent Tool] 未知工具: name='{}'", request.name())
-                    messages.add(ToolExecutionResultMessage.from(request, "未知工具"))
-                }
+                val result = executeAgentWebSearch(request)
+                // 2c) 构造 ToolExecutionResultMessage 并加入消息列表
+                messages.add(ToolExecutionResultMessage.from(request, result))
             }
 
             // ---- 第2轮：流式调用，获取 AI 基于搜索结果的最终文本回复 ----
             log.info("[Agent] 第2轮（流式）：基于搜索结果生成最终文本回复")
-            streamingChatGenerate(streamingModel, messages, sessionId, onDelta)
+            streamingChatGenerate(
+                streamingModel = streamingModel,
+                messages = messages,
+                sessionId = sessionId,
+                onReset = onReset,
+                onDelta = onDelta,
+                toolSpecs = listOf(webSearchToolSpec),
+                executeTool = { executeAgentWebSearch(it) },
+            )
         } else {
             // ---- AI 决定不调用工具，直接流式回复 ----
             log.info("[Agent] AI 决定不调用工具，直接流式回复")
-            streamingChatGenerate(streamingModel, messages, sessionId, onDelta)
+            streamingChatGenerate(
+                streamingModel = streamingModel,
+                messages = messages,
+                sessionId = sessionId,
+                onReset = onReset,
+                onDelta = onDelta,
+                toolSpecs = listOf(webSearchToolSpec),
+                executeTool = { executeAgentWebSearch(it) },
+            )
         }
     }
 
     /**
+     * 执行通用 Agent 的 webSearch 工具（含 arguments JSON 解析），
+     * 供主流程与「流式阶段出现工具调用时的工具兜底」复用。
+     */
+    private fun executeAgentWebSearch(request: ToolExecutionRequest): String {
+        if (request.name() != "webSearch") {
+            log.warn("[Agent Tool] 未知工具: name='{}'", request.name())
+            return "未知工具"
+        }
+        // 解析 arguments JSON，提取 query 字段（AI 用 function calling 传参时是 JSON 格式）
+        val rawArgs = request.arguments()
+        val query = try {
+            val jsonNode = objectMapper.readTree(rawArgs)
+            val extracted = jsonNode.get("query")?.asText() ?: rawArgs
+            log.info("[Agent Tool] 从 arguments JSON 提取 query: '{}'", extracted)
+            extracted
+        } catch (_: Exception) {
+            log.info("[Agent Tool] arguments 不是 JSON，直接使用: '{}'", rawArgs)
+            rawArgs
+        }
+        log.info("[Agent Tool] AI 执行工具: name='{}', query='{}'", request.name(), query)
+        val result = tavilySearchTool.webSearch(query)
+        log.info("[Agent Tool] 搜索完成，返回 {} 字符", result.length)
+        return result
+    }
+
+    /**
      * 流式调用 AI 模型，并处理流式输出回调。
+     *
+     * 流式阶段的职责是输出最终正文；工具决策在主流程已通过「非流式」完成。
+     * 但模型行为不可控——若流式阶段仍意外产出工具调用（结构化
+     * toolExecutionRequests 或 `|DSML|` / `{"toolExecutionRequests":...}` 协议文本），
+     * 不再当作空白静默丢弃，而是通过 [replyVerdict]/[streamingFallbackResend] 分流：
+     *   带工具能力 → 用非流式工具循环补全执行并重生成；
+     *   无工具能力 → 明确报「工具通道问题」。
      */
     private fun streamingChatGenerate(
         streamingModel: OpenAiStreamingChatModel,
         messages: MutableList<ChatMessage>,
         sessionId: String,
+        onReset: (() -> Unit)? = null,
         onDelta: (String) -> Unit,
+        toolSpecs: List<ToolSpecification>? = null,
+        executeTool: ((ToolExecutionRequest) -> String)? = null,
+        maxToolRounds: Int = maxToolRounds(),
     ) {
         val aiReply = StringBuilder()
+        var streamedToolCalls = false
         val future = CompletableFuture<Response<AiMessage>>()
 
         streamingModel.generate(messages, object : StreamingResponseHandler<AiMessage> {
@@ -554,8 +783,17 @@ class ChatMemoryService(
             }
 
             override fun onComplete(response: Response<AiMessage>) {
-                val finalText = response.content()?.text()
-                if (finalText != null && aiReply.isEmpty()) {
+                // 流式阶段若模型以结构化形式返回了工具调用（细碎正文可能为空），
+                // 必须记录，防止把「工具通道问题」误判成「真空白」。
+                val content = response.content()
+                val toolCalls = content?.toolExecutionRequests()
+                if (toolCalls != null && toolCalls.isNotEmpty()) {
+                    streamedToolCalls = true
+                }
+                val finalText = content?.text()
+                // 若 onNext 只拼到了空白/工具垃圾文本（aiReply 非空但空白），
+                // 仍以 complete 携带的干净正文为准，避免干净正文被垃圾文本挤掉。
+                if (finalText != null && aiReply.isBlank()) {
                     aiReply.append(finalText)
                     onDelta(finalText)
                 }
@@ -579,9 +817,25 @@ class ChatMemoryService(
             } catch (_: Exception) {}
             val cause = e.cause ?: e
             error("AI 接口错误：${cause.message}")
+            return
         }
 
-        // 保存 AI 回复到 MySQL
+        // 流式结果校验：区分「真空白」与「工具通道问题」，触发对应兜底
+        val verdict = replyVerdict(aiReply, streamedToolCalls)
+        if (verdict != ReplyVerdict.VALID) {
+            streamingFallbackResend(
+                chatMessages = messages,
+                aiReply = aiReply,
+                verdict = verdict,
+                onReset = onReset,
+                onDelta = onDelta,
+                toolSpecs = toolSpecs,
+                executeTool = executeTool,
+                maxToolRounds = maxToolRounds,
+            )
+        }
+
+        // 保存 AI 回复到 MySQL（仅落有效非空正文，杜绝悬空/空白 assistant 消息）
         if (aiReply.isNotEmpty()) {
             val aiRecord = ChatHistory(
                 sessionId = sessionId,
@@ -592,12 +846,210 @@ class ChatMemoryService(
         }
     }
 
-    // ─── 传统模式（保留原有全部逻辑）──────────────────────────
+    // ─── 流式无效兜底（空白 / 工具调用文本 → 非流式重生成）────────
+
+    /**
+     * 判断流式累积的回复是否「有效」。
+     *
+     * 两种情况视为无效，走非流式兜底：
+     *  - 纯空白（仅空格 / 换行，如 "\n\n"）→ 典型「空气泡」。
+     *  - 把工具调用协议当正文输出了（deepseek 的工具调用格式 `|DSML|` 或 langchain4j 的
+     *    `{\"toolExecutionRequests\":...}`）→ 用户看到的是结构化 JSON，不是答案。
+     */
+    /**
+     * 校验流式累积的回复，给出判定。
+     *
+     * 关键区分：空回复分「真空白」与「工具通道问题」两类——
+     *  - [ReplyVerdict.BLANK_NO_TOOLS]：真空白，且本轮没有工具调用 → 可安全走非流式兜底。
+     *  - [ReplyVerdict.TOOL_CALLS]：空白但本轮携带了工具调用（结构化/协议文本）→
+     *    是工具通道问题，必须执行工具并重生成，不能当空白静默丢弃。
+     */
+    private fun replyVerdict(aiReply: StringBuilder, streamedToolCalls: Boolean): ReplyVerdict {
+        val raw = aiReply.toString()
+        // 剥离工具标记后仍有有效正文 → 有答案，直接可用
+        if (extractCleanAnswer(raw).isNotBlank()) return ReplyVerdict.VALID
+
+        val hasToolMarkers = raw.contains("|DSML|") || raw.contains("\"toolExecutionRequests\"")
+        return if (streamedToolCalls || hasToolMarkers) {
+            log.warn("流式回复为空但携带了工具调用（streamedToolCalls={}, 含协议标记={}），判定为工具通道问题", streamedToolCalls, hasToolMarkers)
+            ReplyVerdict.TOOL_CALLS
+        } else {
+            ReplyVerdict.BLANK_NO_TOOLS
+        }
+    }
+
+    /**
+     * 流式回复兜底纠正，按判定分流：
+     *  - [ReplyVerdict.VALID]：剥离工具标记，清空气泡后重发干净正文（不重新生成）。
+     *  - [ReplyVerdict.TOOL_CALLS]：流式阶段出现工具调用 → 非流式工具循环补全执行并重生成最终答案；
+     *    无工具能力时明确报「工具通道问题」，而非静默兜底。
+     *  - [ReplyVerdict.BLANK_NO_TOOLS]：真空白 → 用当前模型非流式重试一次。
+     * 最终仍无有效内容 → 抛出错误，由控制器推送 event:error。
+     */
+    private fun streamingFallbackResend(
+        chatMessages: List<ChatMessage>,
+        aiReply: StringBuilder,
+        verdict: ReplyVerdict,
+        onReset: (() -> Unit)?,
+        onDelta: (String) -> Unit,
+        toolSpecs: List<ToolSpecification>? = null,
+        executeTool: ((ToolExecutionRequest) -> String)? = null,
+        maxToolRounds: Int = maxToolRounds(),
+    ) {
+        val raw = aiReply.toString()
+
+        // ── 第一步：剥离工具标记，提取真实答案（VALID 分支）──
+        val clean = extractCleanAnswer(raw)
+        if (clean.isNotBlank()) {
+            log.info("流式回复混入工具调用文本，剥离标记后提取到真实正文（长度={}）", clean.length)
+            onReset?.invoke()
+            aiReply.setLength(0)
+            aiReply.append(clean)
+            onDelta(clean)
+            return
+        }
+
+        // ── 工具通道问题：流式阶段出现了工具调用，而非真空白 ──
+        if (verdict == ReplyVerdict.TOOL_CALLS) {
+            if (toolSpecs != null && executeTool != null) {
+                log.warn("流式阶段出现工具调用且正文为空，改用非流式工具循环补全执行并重生成最终答案")
+                onReset?.invoke()
+                aiReply.setLength(0)
+                val text = nonStreamingToolLoopAndFinalText(chatMessages, toolSpecs, executeTool, maxToolRounds)
+                if (text != null) {
+                    aiReply.append(text)
+                    onDelta(text)
+                    return
+                }
+                error("模型在流式阶段触发了工具调用，但工具兜底执行未得出有效结果，请重试或更换模型")
+                return
+            }
+            log.warn("流式阶段出现了工具调用，但当前会话未配置工具执行通道")
+            onReset?.invoke()
+            aiReply.setLength(0)
+            error("模型流式返回了工具调用，但当前会话未配置工具执行通道，请更换模型/通道")
+            return
+        }
+
+        // ── 真空白：当前模型非流式重试一次 ──
+        log.warn("流式回复为真空白，改用当前模型非流式兜底重生成")
+        onReset?.invoke()
+        aiReply.setLength(0)
+        try {
+            val nonStreamingModel = buildNonStreamingModel()
+            val resp = nonStreamingModel.generate(chatMessages)
+            val text = resp.content()?.text() ?: ""
+            if (text.isBlank()) {
+                error("AI 未返回有效内容，请重试或更换模型")
+                return
+            }
+            aiReply.append(text)
+            onDelta(text)
+        } catch (e: Exception) {
+            val cause = e.cause ?: e
+            error("AI 接口错误：${cause.message}")
+        }
+    }
+
+    /**
+     * 非流式工具决策 + 最终文本生成，用于「流式阶段意外出现工具调用」时的兜底。
+     *
+     * 与 [chatWithExpertTools] 的策略一致：用非流式模型做多轮工具决策并执行，
+     * 最后生成最终文本。刻意避开流式阶段的递归，避免重蹈 DeepSeek V4 SSE 递归问题。
+     *
+     * @return 最终有效正文；无法得出有效内容时返回 null
+     */
+    private fun nonStreamingToolLoopAndFinalText(
+        chatMessages: List<ChatMessage>,
+        toolSpecs: List<ToolSpecification>,
+        executeTool: (ToolExecutionRequest) -> String,
+        maxToolRounds: Int,
+    ): String? {
+        val nonStreamingModel = buildNonStreamingModel()
+        val messages = chatMessages.toMutableList()
+        var toolRounds = 0
+        while (toolRounds < maxToolRounds) {
+            toolRounds++
+            val resp = try {
+                nonStreamingModel.generate(messages, toolSpecs)
+            } catch (e: Exception) {
+                log.warn("工具兜底：非流式工具决策第 $toolRounds 轮失败: {}", e.message)
+                return null
+            }.content() ?: return null
+
+            if (!resp.hasToolExecutionRequests()) {
+                return resp.text()?.takeIf { it.isNotBlank() }
+            }
+            messages.add(resp)
+            for (request in resp.toolExecutionRequests()) {
+                val result = executeTool(request)
+                messages.add(ToolExecutionResultMessage.from(request, result))
+            }
+        }
+        val finalResp = try {
+            nonStreamingModel.generate(messages)
+        } catch (e: Exception) {
+            log.warn("工具兜底：最终文本生成失败: {}", e.message)
+            return null
+        }.content() ?: return null
+        return finalResp.text()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * 从原始流式文本中剥离工具调用标记，提取真实正文。
+     *
+     * 处理两类协议文本：
+     *  - DeepSeek `|DSML|`：整段工具调用协议通常由 `<|DSML|` 起、到 `|DSML|>` 止（可能跨多行）。
+     *    重复剥离直到不再出现。
+     *  - LangChain4j `{"toolExecutionRequests":...}`：剥离自首个 `{` 到与之配对的 `}` 的整段 JSON。
+     *
+     * @return 剥离后的文本（可能仍为空白）
+     */
+    private fun extractCleanAnswer(raw: String): String {
+        var text = raw
+
+        // 1) 剥离 DeepSeek `|DSML|` 工具块
+        while (true) {
+            val startMark = text.indexOf("<|DSML|")
+            if (startMark < 0) break
+            val endMark = text.indexOf("|DSML|>", startMark)
+            val end = if (endMark >= 0) endMark + "|DSML|>".length else text.length
+            text = text.substring(0, startMark) + text.substring(end)
+        }
+        if (text != raw) {
+            log.info("已从流式回复剥离 DSML 工具调用文本（原始长度={} → 剥离后={}）", raw.length, text.length)
+        }
+
+        // 2) 剥离 LangChain4j `{"toolExecutionRequests":...}` JSON 块
+        if (text.contains("\"toolExecutionRequests\"")) {
+            val start = text.indexOf("{")
+            if (start >= 0) {
+                var depth = 0
+                var segEnd = -1
+                for (i in start until text.length) {
+                    when (text[i]) {
+                        '{' -> depth++
+                        '}' -> {
+                            depth--
+                            if (depth == 0) { segEnd = i + 1; break }
+                        }
+                    }
+                }
+                if (segEnd >= 0) {
+                    text = text.substring(0, start) + text.substring(segEnd)
+                    log.info("已从流式回复剥离 toolExecutionRequests JSON 文本")
+                }
+            }
+        }
+
+        return text.trim()
+    }
 
     private fun chatSimple(
         sessionId: String,
         streamingModel: OpenAiStreamingChatModel,
         systemPrompt: String,
+        onReset: (() -> Unit)? = null,
         onDelta: (String) -> Unit,
     ) {
         // 2) 从 MySQL 恢复完整对话历史 → 构建 LangChain4j ChatMemory
@@ -622,6 +1074,7 @@ class ChatMemoryService(
 
         // 6) 调用 AI 流式 API（原有逻辑）
         val aiReply = StringBuilder()
+        var streamedToolCalls = false
         val future = CompletableFuture<Response<AiMessage>>()
 
         streamingModel.generate(chatMessages, object : StreamingResponseHandler<AiMessage> {
@@ -631,8 +1084,14 @@ class ChatMemoryService(
             }
 
             override fun onComplete(response: Response<AiMessage>) {
-                val finalText = response.content()?.text()
-                if (finalText != null && aiReply.isEmpty()) {
+                val content = response.content()
+                val toolCalls = content?.toolExecutionRequests()
+                if (toolCalls != null && toolCalls.isNotEmpty()) {
+                    streamedToolCalls = true
+                }
+                val finalText = content?.text()
+                // 若 onNext 只拼到了空白/工具垃圾文本，仍以 complete 携带的干净正文为准
+                if (finalText != null && aiReply.isBlank()) {
                     aiReply.append(finalText)
                     onDelta(finalText)
                 }
@@ -653,6 +1112,18 @@ class ChatMemoryService(
             )
             val cause = e.cause ?: e
             error("AI 接口错误：${cause.message}")
+        }
+
+        // 6.5) 流式结果校验：区分「真空白」与「工具通道问题」，触发对应兜底
+        val verdict = replyVerdict(aiReply, streamedToolCalls)
+        if (verdict != ReplyVerdict.VALID) {
+            streamingFallbackResend(
+                chatMessages = chatMessages,
+                aiReply = aiReply,
+                verdict = verdict,
+                onReset = onReset,
+                onDelta = onDelta,
+            )
         }
 
         // 7) 将 AI 回复写入 MySQL
@@ -777,51 +1248,67 @@ class ChatMemoryService(
         }
     }
 
+    /**
+     * 构建流式模型：baseUrl / api-key / model 均按「请求级（前端 AI 设置） > 服务端默认」解析。
+     */
     private fun buildStreamingModel(): OpenAiStreamingChatModel {
+        val config = aiRuntimeConfigManager.current()
         val builder = OpenAiStreamingChatModel.builder()
-            .modelName(model)
+            .modelName(resolveModel(config))
             .logRequests(true)
             .logResponses(true)
 
-        val baseUrl = chatCompletionsUrl()
-        if (baseUrl.isNotBlank()) {
-            builder.baseUrl(baseUrl)
+        val effectiveBaseUrl = resolveBaseUrl(config)
+        if (effectiveBaseUrl.isNotBlank()) {
+            builder.baseUrl(effectiveBaseUrl)
         }
-        if (apiKey.isNotBlank()) {
-            builder.apiKey(apiKey)
+        val effectiveApiKey = resolveApiKey(config)
+        if (effectiveApiKey.isNotBlank()) {
+            builder.apiKey(effectiveApiKey)
         }
 
         return builder.build()
     }
 
     /**
-     * 构建非流式模型，用于 Agent 模式第一轮工具决策调用。
+     * 构建非流式模型，用于 Agent 模式第一轮工具决策调用 / 流式回复无效时兜底重生成。
      * 非流式调用更稳定可靠，避免 DeepSeek V4 SSE 递归兼容性问题。
+     * baseUrl / api-key / model 同样按「请求级（前端 AI 设置） > 服务端默认」解析。
+     *
+     * @param modelOverride 可选模型名覆盖；为空则沿用默认解析。当前兜底路径未传（沿用当前模型），
+     *                      保留该参数以备后续支持切换模型。
      */
-    private fun buildNonStreamingModel(): OpenAiChatModel {
+    private fun buildNonStreamingModel(modelOverride: String? = null): OpenAiChatModel {
+        val config = aiRuntimeConfigManager.current()
         val builder = OpenAiChatModel.builder()
-            .modelName(model)
+            .modelName(modelOverride?.takeIf { it.isNotBlank() } ?: resolveModel(config))
             .logRequests(true)
             .logResponses(true)
 
-        val baseUrl = chatCompletionsUrl()
-        if (baseUrl.isNotBlank()) {
-            builder.baseUrl(baseUrl)
+        val effectiveBaseUrl = resolveBaseUrl(config)
+        if (effectiveBaseUrl.isNotBlank()) {
+            builder.baseUrl(effectiveBaseUrl)
         }
-        if (apiKey.isNotBlank()) {
-            builder.apiKey(apiKey)
+        val effectiveApiKey = resolveApiKey(config)
+        if (effectiveApiKey.isNotBlank()) {
+            builder.apiKey(effectiveApiKey)
         }
 
         return builder.build()
     }
 
-    private fun chatCompletionsUrl(): String {
-        val raw = apiUrl.trim()
-        if (raw.isBlank()) return raw
-        val normalized = raw.removeSuffix("/")
-        if (normalized.contains("/chat/completions")) {
-            return normalized.substringBefore("/chat/completions")
-        }
-        return normalized
-    }
+    /**
+     * 生效 baseUrl：请求级（前端「AI 设置」）> 配置文件默认，并统一归一化（自动补 /v1 等）。
+     * LangChain4j 会在该 baseUrl 后自行拼接 /chat/completions。
+     */
+    private fun resolveBaseUrl(config: AiRuntimeConfig?): String =
+        AiUrlNormalizer.normalize(config?.baseUrl ?: apiUrl)
+
+    /** 生效 api-key：前端自定义 token 优先级高于 key.properties / application.yml 中的默认 token */
+    private fun resolveApiKey(config: AiRuntimeConfig?): String =
+        config?.apiKey?.trim().takeUnless { it.isNullOrEmpty() } ?: apiKey.trim()
+
+    /** 生效模型名：请求级 > 配置文件默认 */
+    private fun resolveModel(config: AiRuntimeConfig?): String =
+        config?.model?.trim().takeUnless { it.isNullOrEmpty() } ?: model
 }
