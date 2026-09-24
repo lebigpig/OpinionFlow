@@ -58,6 +58,7 @@ class ChatMemoryService(
     private val akshareTool: AkShareTool,
     private val companyAgentKeyManager: CompanyAgentKeyManager,
     private val aiRuntimeConfigManager: AiRuntimeConfigManager,
+    private val mcpToolClient: McpToolClient,
     @Value("\${opinionflow.ai.api-url:}") private val apiUrl: String,
     @Value("\${opinionflow.ai.api-key:}") private val apiKey: String,
     @Value("\${opinionflow.ai.model:gpt-4o-mini}") private val model: String,
@@ -414,7 +415,6 @@ class ChatMemoryService(
      */
     private fun buildCompanyExpertToolSpecs(): List<ToolSpecification> {
         val specs = mutableListOf<ToolSpecification>()
-        specs.add(webSearchToolSpec())
         // 企业财报工具
         specs.add(simpleToolSpec("queryCompany", "查询中国上市公司基础信息与财报列表。参数 keyword 为股票代码或公司名称（如 600519 或 贵州茅台）。", "keyword"))
         specs.add(simpleToolSpec("queryCompanyDetail", "查询中国上市公司详情与财报行数概览。参数 companyId 为公司 id。", "companyId"))
@@ -424,14 +424,13 @@ class ChatMemoryService(
         specs.add(simpleToolSpec("queryFinancialIndicators", "查询财务指标（ROE、毛利率等）。参数 reportId 为财报 id。", "reportId"))
         specs.add(simpleToolSpec("queryIndicatorHistory", "查询财务指标历史走势。参数 companyId / indicatorCode。", "companyId indicatorCode"))
         specs.add(simpleToolSpec("queryPeerCompare", "同行业指标横向对比。参数 indicatorCode、industry、fiscalYear、fiscalPeriod。", "indicatorCode industry fiscalYear fiscalPeriod"))
-        // 新闻库工具
-        specs.add(simpleToolSpec("searchFinanceNews", "检索新闻库财经快讯。参数 keyword、start、end（日期 yyyy-MM-dd）。", "keyword"))
-        specs.add(simpleToolSpec("searchGeneralNews", "检索新闻库通用新闻（网易）。参数 keyword、start、end。", "keyword"))
-        specs.add(simpleToolSpec("getFinanceNewsDetail", "获取财经快讯全文。参数 id 为快讯 id。", "id"))
-        // 外部数据工具
+        // 其余本地工具（Tushare / Sina）
         specs.add(simpleToolSpec("tushareQuery", "查询 Tushare 外部财经数据。参数 apiName 为接口名，params 为 JSON 参数。", "apiName params"))
         specs.add(simpleToolSpec("sinaQuote", "查询新浪财经实时行情。参数 symbol 为股票代码（带交易所前缀，逗号分隔）。", "symbol"))
-        specs.add(simpleToolSpec("akshareQuery", "通过 AkShare 查询股票财经数据。参数 symbol 股票代码、mode（info/spot/hist/news/industry）。", "symbol mode"))
+
+        // ★ 已迁移到 opinionflow-mcp-server 的工具（Tavily/webSearch、News、AkShare）：
+        //   从 MCP 服务器动态拉取工具规格，避免本地重复维护。若 MCP 不可用则返回空（即不暴露）。
+        specs.addAll(mcpToolClient.toolSpecs())
         return specs
     }
 
@@ -491,13 +490,13 @@ class ChatMemoryService(
                 (args["fiscalYear"]?.toString()?.toIntOrNull()) ?: 0,
                 str("fiscalPeriod") ?: "年报",
             )
-            "searchFinanceNews" -> newsSearchTool.searchFinanceNews(str("keyword") ?: str("query") ?: "", str("start"), str("end"))
-            "searchGeneralNews" -> newsSearchTool.searchGeneralNews(str("keyword") ?: str("query") ?: "", str("start"), str("end"))
-            "getFinanceNewsDetail" -> newsSearchTool.getFinanceNewsDetail(num("id") ?: -1L)
-            "webSearch" -> tavilySearchTool.webSearch(str("query") ?: "")
+            "searchFinanceNews" -> mcpToolClient.executeTool("searchFinanceNews", rawArgs)
+            "searchGeneralNews" -> mcpToolClient.executeTool("searchGeneralNews", rawArgs)
+            "getFinanceNewsDetail" -> mcpToolClient.executeTool("getFinanceNewsDetail", rawArgs)
+            "webSearch" -> mcpToolClient.executeTool("webSearch", rawArgs)
             "tushareQuery" -> tushareFinanceTool.tushareQuery(str("apiName") ?: "", str("params") ?: "{}")
             "sinaQuote" -> sinaFinanceTool.sinaQuote(str("symbol") ?: "")
-            "akshareQuery" -> akshareTool.akshareQuery(str("symbol") ?: "", str("mode") ?: "info", str("start"), str("end"))
+            "akshareQuery" -> mcpToolClient.executeTool("akshareQuery", rawArgs)
             else -> {
                 log.warn("[CompanyExpert] 未知工具: name='{}'", request.name())
                 "未知工具"
@@ -551,7 +550,6 @@ class ChatMemoryService(
      */
     private fun buildCompanyUsExpertToolSpecs(): List<ToolSpecification> {
         val specs = mutableListOf<ToolSpecification>()
-        specs.add(webSearchToolSpec())
         // 美股财报工具
         specs.add(simpleToolSpec("queryCompany", "查询美国上市公司基础信息与财报列表。参数 keyword 为股票代码或公司名称（如 AAPL 或 Apple）。", "keyword"))
         specs.add(simpleToolSpec("queryCompanyDetail", "查询美国上市公司详情与财报行数概览。参数 companyId 为公司 id。", "companyId"))
@@ -561,14 +559,13 @@ class ChatMemoryService(
         specs.add(simpleToolSpec("queryFinancialIndicators", "查询美股财务指标（ROE、毛利率、EPS 等）。参数 reportId 为财报 id。", "reportId"))
         specs.add(simpleToolSpec("queryIndicatorHistory", "查询美股财务指标历史走势。参数 companyId / indicatorCode。", "companyId indicatorCode"))
         specs.add(simpleToolSpec("queryPeerCompare", "美股同行业指标横向对比。参数 indicatorCode、industry、fiscalYear、fiscalPeriod。", "indicatorCode industry fiscalYear fiscalPeriod"))
-        // 新闻库工具
-        specs.add(simpleToolSpec("searchFinanceNews", "检索新闻库财经快讯。参数 keyword、start、end（日期 yyyy-MM-dd）。", "keyword"))
-        specs.add(simpleToolSpec("searchGeneralNews", "检索新闻库通用新闻（网易）。参数 keyword、start、end。", "keyword"))
-        specs.add(simpleToolSpec("getFinanceNewsDetail", "获取财经快讯全文。参数 id 为快讯 id。", "id"))
-        // 外部数据工具
+        // 其余本地工具（Tushare / Sina）
         specs.add(simpleToolSpec("tushareQuery", "查询 Tushare 外部财经数据。参数 apiName 为接口名，params 为 JSON 参数。", "apiName params"))
         specs.add(simpleToolSpec("sinaQuote", "查询新浪财经实时行情。参数 symbol 为股票代码（带交易所前缀，逗号分隔）。", "symbol"))
-        specs.add(simpleToolSpec("akshareQuery", "通过 AkShare 查询股票财经数据。参数 symbol 股票代码、mode（info/spot/hist/news/industry）。", "symbol mode"))
+
+        // ★ 已迁移到 opinionflow-mcp-server 的工具（Tavily/webSearch、News、AkShare）：
+        //   从 MCP 服务器动态拉取工具规格，避免本地重复维护。若 MCP 不可用则返回空（即不暴露）。
+        specs.addAll(mcpToolClient.toolSpecs())
         return specs
     }
 
@@ -601,13 +598,13 @@ class ChatMemoryService(
                 (args["fiscalYear"]?.toString()?.toIntOrNull()) ?: 0,
                 str("fiscalPeriod") ?: "FY",
             )
-            "searchFinanceNews" -> newsSearchTool.searchFinanceNews(str("keyword") ?: str("query") ?: "", str("start"), str("end"))
-            "searchGeneralNews" -> newsSearchTool.searchGeneralNews(str("keyword") ?: str("query") ?: "", str("start"), str("end"))
-            "getFinanceNewsDetail" -> newsSearchTool.getFinanceNewsDetail(num("id") ?: -1L)
-            "webSearch" -> tavilySearchTool.webSearch(str("query") ?: "")
+            "searchFinanceNews" -> mcpToolClient.executeTool("searchFinanceNews", rawArgs)
+            "searchGeneralNews" -> mcpToolClient.executeTool("searchGeneralNews", rawArgs)
+            "getFinanceNewsDetail" -> mcpToolClient.executeTool("getFinanceNewsDetail", rawArgs)
+            "webSearch" -> mcpToolClient.executeTool("webSearch", rawArgs)
             "tushareQuery" -> tushareFinanceTool.tushareQuery(str("apiName") ?: "", str("params") ?: "{}")
             "sinaQuote" -> sinaFinanceTool.sinaQuote(str("symbol") ?: "")
-            "akshareQuery" -> akshareTool.akshareQuery(str("symbol") ?: "", str("mode") ?: "info", str("start"), str("end"))
+            "akshareQuery" -> mcpToolClient.executeTool("akshareQuery", rawArgs)
             else -> {
                 log.warn("[CompanyUsExpert] 未知工具: name='{}'", request.name())
                 "未知工具"
@@ -650,15 +647,19 @@ class ChatMemoryService(
         // 构建非流式模型（用于第一轮工具决策）
         val nonStreamingModel = buildNonStreamingModel()
 
-        // 构造 webSearch 工具的 ToolSpecification
-        val webSearchToolSpec = ToolSpecification.builder()
-            .name("webSearch")
-            .description("""搜索互联网获取最新信息。当你需要查找实时新闻、最新数据、市场行情、突发事件等无法从已有知识中获取的信息时，请调用此工具。""")
-            .parameters(JsonObjectSchema.builder()
-                .addStringProperty("query", "精炼的搜索关键词，例如：'2026-05-29 A股 板块资金净流入 排名'")
-                .required("query")
-                .build())
-            .build()
+        // 构造 webSearch 工具的 ToolSpecification（已迁移到 opinionflow-mcp-server，动态拉取）
+        val webSearchToolSpec = mcpToolClient.toolSpecs().firstOrNull { it.name() == "webSearch" }
+            ?: run {
+                // MCP 不可用时的回退规格
+                ToolSpecification.builder()
+                    .name("webSearch")
+                    .description("搜索互联网获取最新信息。当你需要查找实时新闻、最新数据、市场行情、突发事件等无法从已有知识中获取的信息时，请调用此工具。")
+                    .parameters(JsonObjectSchema.builder()
+                        .addStringProperty("query", "精炼的搜索关键词，例如：'2026-05-29 A股 板块资金净流入 排名'")
+                        .required("query")
+                        .build())
+                    .build()
+            }
 
         // 1) 从 MySQL 加载历史消息
         val historyRecords = chatHistoryRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)
@@ -729,13 +730,13 @@ class ChatMemoryService(
     /**
      * 执行通用 Agent 的 webSearch 工具（含 arguments JSON 解析），
      * 供主流程与「流式阶段出现工具调用时的工具兜底」复用。
+     * 已迁移到 opinionflow-mcp-server，这里转发给 MCP 远程执行。
      */
     private fun executeAgentWebSearch(request: ToolExecutionRequest): String {
         if (request.name() != "webSearch") {
             log.warn("[Agent Tool] 未知工具: name='{}'", request.name())
             return "未知工具"
         }
-        // 解析 arguments JSON，提取 query 字段（AI 用 function calling 传参时是 JSON 格式）
         val rawArgs = request.arguments()
         val query = try {
             val jsonNode = objectMapper.readTree(rawArgs)
@@ -747,8 +748,8 @@ class ChatMemoryService(
             rawArgs
         }
         log.info("[Agent Tool] AI 执行工具: name='{}', query='{}'", request.name(), query)
-        val result = tavilySearchTool.webSearch(query)
-        log.info("[Agent Tool] 搜索完成，返回 {} 字符", result.length)
+        val result = mcpToolClient.executeTool("webSearch", rawArgs)
+        log.info("[Agent Tool] webSearch 完成（MCP），返回 {} 字符", result.length)
         return result
     }
 

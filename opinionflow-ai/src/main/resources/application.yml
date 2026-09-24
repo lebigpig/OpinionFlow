@@ -66,6 +66,17 @@ opinionflow:
     # 新浪财经实时行情接口（免费、无需 token）
     sina-base-url: ${opinionflow.finance.sina-base-url:https://hq.sinajs.cn/list=}
 
+  # MCP（Model Context Protocol）远程工具服务配置
+  # 用于把 Tavily/webSearch、News、AkShare 等工具迁移到独立进程 opinionflow-mcp-server，
+  # opinionflow-ai 通过 Nacos 服务发现 + SSE 传输远程调用。
+  mcp:
+    # Nacos 中 MCP 服务器注册的服务名
+    server-name: opinionflow-mcp-server
+    # MCP 服务器 SSE 端点路径
+    sse-path: /sse
+    # 客户端请求/初始化超时（秒）
+    timeout-seconds: 30
+
 # Feign 配置（SSE 流式支持）
 spring.cloud.openfeign.client.config:
   default:

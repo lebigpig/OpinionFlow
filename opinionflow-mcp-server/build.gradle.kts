@@ -1,7 +1,6 @@
 plugins {
     kotlin("jvm")
     kotlin("plugin.spring")
-    kotlin("plugin.jpa")
     id("org.springframework.boot")
     id("io.spring.dependency-management")
 }
@@ -16,6 +15,8 @@ java {
 
 repositories {
     mavenCentral()
+    maven { url = uri("https://repo.spring.io/milestone") }
+    maven { url = uri("https://repo.spring.io/snapshot") }
 }
 
 extra["springCloudAlibabaVersion"] = "2023.0.3.2"
@@ -31,51 +32,37 @@ dependencyManagement {
 dependencies {
     // 公共模块
     implementation(project(":opinionflow-common"))
+
+    // Feign 客户端声明（news / spider / company 等）
     implementation(project(":opinionflow-api"))
 
-    // Spring Boot
+    // Spring Boot（MVC，配合 MCP 的 WebMvc 传输，避免 WebFlux 冲突）
     implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    implementation("org.springframework.boot:spring-boot-starter-data-redis")
-    implementation("org.springframework.boot:spring-boot-starter-validation")
+
+    // Spring AI MCP Server（Streamable SSE；版本由根 build.gradle 的 spring-ai-bom:1.0.0 管理）
+    implementation("org.springframework.ai:spring-ai-starter-mcp-server")
+
+    // WebMvc（Servlet）SSE 传输实现：提供 io.modelcontextprotocol.server.transport.WebMvcSseServerTransportProvider。
+    // 说明：base 的 spring-ai-starter-mcp-server 只带核心 MCP SDK（默认回落 STDIO 传输），
+    //       不引入本模块时 McpWebMvcServerAutoConfiguration 因 @ConditionalOnClass 不生效，
+    //       服务能启动但不会暴露 HTTP /sse 端点（MCP Client 无法连接）。
+    //       等价于官方 spring-ai-starter-mcp-server-webmvc 相比 base 多出的依赖，版本需与 spring-ai-mcp:1.0.0 内部一致（0.10.0）。
+    implementation("io.modelcontextprotocol.sdk:mcp-spring-webmvc:0.10.0")
+
+    // Spring Cloud Alibaba - Nacos 服务发现（MCP Server 注册到 Nacos，供 AI 侧寻址）
+    implementation("com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-discovery")
+
+    // OpenFeign + LoadBalancer（访问 opinionflow-news / opinionflow-spider）
+    implementation("org.springframework.cloud:spring-cloud-starter-openfeign")
+    implementation("org.springframework.cloud:spring-cloud-starter-loadbalancer")
+
+    // Jackson datetime
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
 
     // Kotlin
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
-
-    // Spring Cloud Alibaba - Nacos
-    implementation("com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-discovery")
-    implementation("com.alibaba.cloud:spring-cloud-starter-alibaba-nacos-config")
-
-    // OpenFeign + LoadBalancer
-    implementation("org.springframework.cloud:spring-cloud-starter-openfeign")
-    implementation("org.springframework.cloud:spring-cloud-starter-loadbalancer")
-
-    // MySQL
-    runtimeOnly("com.mysql:mysql-connector-j")
-
-    // LangChain4j - OpenAI + Milvus
-    implementation("dev.langchain4j:langchain4j-open-ai-spring-boot-starter:1.0.0-beta1")
-    implementation("dev.langchain4j:langchain4j:1.0.0-beta1")
-    implementation("dev.langchain4j:langchain4j-milvus:1.0.0-beta1")
-    implementation("dev.langchain4j:langchain4j-embeddings-bge-small-zh-v15:1.0.0-beta1")
-
-    // Milvus
-    implementation("io.milvus:milvus-sdk-java:2.4.1")
-
-    // MCP (Model Context Protocol) Client - 官方 Java SDK 0.10.0
-    // 用于对接 opinionflow-mcp-server（SSE 传输），远程调用迁移后的 Tavily / News / AkShare 工具
-    implementation("io.modelcontextprotocol.sdk:mcp:0.10.0")
-    implementation("io.modelcontextprotocol.sdk:mcp-spring-webmvc:0.10.0")
-
-    // Jackson datetime
-    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
-
-    // Lombok
-    compileOnly("org.projectlombok:lombok")
-    annotationProcessor("org.projectlombok:lombok")
 
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")

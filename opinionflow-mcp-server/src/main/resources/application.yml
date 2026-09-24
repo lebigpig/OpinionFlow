@@ -1,0 +1,57 @@
+server:
+  port: 9208
+
+spring.cloud.compatibility-verifier:
+  enabled: false
+
+spring:
+  config:
+    import: optional:file:./key.properties,optional:file:../key.properties
+  application:
+    name: opinionflow-mcp-server
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+      config:
+        server-addr: 127.0.0.1:8848
+        file-extension: yml
+        import-check:
+          enabled: false
+
+# Spring AI MCP Server 配置（WebMvc/Servlet + SSE 传输）
+# 说明：
+#   1) type: SYNC 只决定使用同步 McpServer；HTTP 传输类型由 classpath 决定——
+#      引入 io.modelcontextprotocol.sdk:mcp-spring-webmvc 后，McpWebMvcServerAutoConfiguration
+#      才会生效并注册 GET/POST /sse（否则回落到 STDIO，不暴露任何 HTTP 端点）。
+#   2) SSE 端点默认即 /sse，此处显式声明以与 opinionflow-ai 侧
+#      opinionflow.mcp.sse-path 保持一致。
+#   3) 不设置 base-url：SSE 的 endpoint 事件返回相对路径，客户端基于自身 baseUri
+#      （Nacos 解析出的 host:port）解析，避免硬编码 127.0.0.1 与实际注册地址不一致。
+#   4) 消息端点使用默认 /mcp/message，客户端通过 endpoint 事件自动发现，无需硬编码。
+spring.ai.mcp.server:
+  name: opinionflow-mcp-server
+  version: 1.0.0
+  type: SYNC
+  sse-endpoint: /sse
+  enabled: true
+
+spring.cloud.openfeign.client.config:
+  default:
+    connect-timeout: 5000
+    read-timeout: 120000
+    logger-level: full
+
+# 供 MCP 工具内部访问各数据源服务的配置
+opinionflow:
+  tavily:
+    enabled: true
+    api-key: ${tavily.api-key:}
+    base-url: ${tavily.base-url:https://api.tavily.com}
+    max-results: 12
+    search-depth: advanced
+
+logging:
+  level:
+    com.lespider.opinionflow: debug
+    com.alibaba.cloud.nacos: info
